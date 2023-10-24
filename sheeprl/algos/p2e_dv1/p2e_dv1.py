@@ -472,6 +472,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any]):
     fabric.print("Encoder MLP keys:", cfg.mlp_keys.encoder)
     fabric.print("Decoder CNN keys:", cfg.cnn_keys.decoder)
     fabric.print("Decoder MLP keys:", cfg.mlp_keys.decoder)
+    obs_keys = cfg.cnn_keys.encoder + cfg.mlp_keys.encoder
 
     world_model, actor_task, critic_task, actor_exploration, critic_exploration = build_models(
         fabric,
@@ -726,7 +727,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any]):
                             real_next_obs[idx] = v
 
         next_obs = {}
-        for k in real_next_obs.keys():  # [N_envs, N_obs]
+        for k in obs_keys:  # [N_envs, N_obs]
             next_obs[k] = torch.from_numpy(o[k]).view(cfg.env.num_envs, *o[k].shape[1:])
             step_data[k] = torch.from_numpy(real_next_obs[k]).view(cfg.env.num_envs, *real_next_obs[k].shape[1:])
             if k in cfg.mlp_keys.encoder:
@@ -749,7 +750,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any]):
         reset_envs = len(dones_idxes)
         if reset_envs > 0:
             reset_data = TensorDict({}, batch_size=[reset_envs], device="cpu")
-            for k in next_obs.keys():
+            for k in obs_keys:
                 reset_data[k] = next_obs[k][dones_idxes]
             reset_data["dones"] = torch.zeros(reset_envs, 1)
             reset_data["actions"] = torch.zeros(reset_envs, np.sum(actions_dim))

@@ -210,6 +210,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any]):
     fabric.print("Encoder MLP keys:", cfg.mlp_keys.encoder)
     fabric.print("Decoder CNN keys:", cfg.cnn_keys.decoder)
     fabric.print("Decoder MLP keys:", cfg.mlp_keys.decoder)
+    obs_keys = cfg.cnn_keys.encoder + cfg.mlp_keys.encoder
 
     # Define the agent and the optimizer and setup them with Fabric
     act_dim = prod(envs.single_action_space.shape)
@@ -433,7 +434,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any]):
                         real_next_obs[k][idx] = v
 
         next_obs = {}
-        for k in real_next_obs.keys():
+        for k in obs_keys:
             next_obs[k] = torch.from_numpy(o[k]).to(fabric.device)
             if k in cfg.cnn_keys.encoder:
                 next_obs[k] = next_obs[k].view(cfg.env.num_envs, -1, *next_obs[k].shape[-2:])
