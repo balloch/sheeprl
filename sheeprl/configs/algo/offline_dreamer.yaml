@@ -142,10 +142,10 @@ world_model:
   # CEM
   cbm_model:
     use_cbm: True
-    n_concepts: 22
+    n_concepts: 24
     emb_size: 16
-    concept_type: ["bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin"]
-    concept_bins: [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2]
+    concept_type: ["bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin"]
+    concept_bins: [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2]
 
   # World model optimizer
   optimizer:
