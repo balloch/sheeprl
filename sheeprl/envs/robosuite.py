@@ -107,6 +107,19 @@ class RobosuiteWrapper(gym.Wrapper):
                 bddl_file_name=bddl_file,
                 **libero_args,
             )
+            # Save goal information for staged rewards
+            if self.reward_shaping:
+                # All our scenes have one goal, so this is simplified from the PickPlace implementation
+                goal_state = BDDLUtils.robosuite_parse_problem(bddl_file)['goal_state'][0]
+                # Hover reward relies only on xy position so in/on is identical
+                target_object = goal_state[1]
+                goal_object = goal_state[2].replace('_contain_region', '')  
+                
+                # Saved important object information
+                self._target_object = env.objects_dict[target_object]
+                self._goal_object = env.objects_dict[goal_object]
+                self._body_geom_ids = (env.sim.model.body_name2id(self._target_object.root_body),
+                                       env.sim.model.body_name2id(self._goal_object.root_body))
         else:
             env = suite.make(**libero_args,
                              **extra_robosuite_make_args)
@@ -180,7 +193,7 @@ class RobosuiteWrapper(gym.Wrapper):
         # self._metadata = {"render_fps": 30}
         # set seed
         self.seed = 10
-
+        
 
     def __getattr__(self, name):
         return getattr(self.env, name)
@@ -260,6 +273,9 @@ class RobosuiteWrapper(gym.Wrapper):
         # self.current_state = _flatten_obs(time_step.observation)
         obs = self._get_obs(time_step[0])
         reward = time_step[1]
+        if self.reward_shaping and self.bddl_file:
+            staged_rewards = self.staged_rewards()
+            reward += max(staged_rewards)
         terminated = time_step[2]
         truncated = time_step[2]
         # terminated = truncated
@@ -280,6 +296,59 @@ class RobosuiteWrapper(gym.Wrapper):
         obs = self._get_obs(orig_obs)
         return obs, {}
         # return obs, (), False, False, {}
+        
+    def staged_rewards(self):
+        """
+        Function to calculate staged rewards
+        Adapted from the function of the same name in robosuite.environments.manipulation.pick_place
+        """
+        assert self.reward_shaping == True
+        # The suite.make environment implements its own staged rewards
+        assert self.bddl_file
+        
+        reach_mult = 0.1
+        # Grasp multiplier set to zero (reference sets it to 0.35) but implemented for completeness
+        grasp_mult = 0.0
+        lift_mult = 0.5
+        hover_mult = 0.7
+        
+        r_reach = 0
+        dist = self.env._gripper_to_target(
+            gripper=self.env.robots[0].gripper,
+            target=self._target_object.root_body,
+            target_type="body",
+            return_distance=True
+        )
+        
+        r_reach = (1 - np.tanh(10.0 * dist)) * reach_mult
+        
+        r_grasp = int(
+            self.env._check_grasp(
+                gripper=self.env.robots[0].gripper,
+                object_geoms=self._target_object.contact_geoms
+            )
+        ) * grasp_mult
+                
+        r_lift = 0.0
+        # Note: Based on experimentation this reward seems to be non-negligible without actually picking the object up
+        # Based on the reference the robosuite environment seems to have similar behavior
+        if r_grasp > 0.0 or grasp_mult == 0.0 or True:
+            z_target = self.env.sim.data.body_xpos[self._body_geom_ids[1]][2]
+            object_z_loc = self.env.sim.data.body_xpos[self._body_geom_ids[0]][2]
+            z_dist = np.maximum(z_target - object_z_loc, 0)
+            r_lift = grasp_mult + (1 - np.tanh(15.0 * z_dist)) * (lift_mult - grasp_mult)
+                    
+        # Reference has a slightly different implementation that encourages dropping in some situations
+        # Since our environment is different I'm unsure how to go about this so this is a simple xy-distance calculation
+        r_hover = 0
+        xy_target = self.env.sim.data.body_xpos[self._body_geom_ids[1]][:2]
+        object_xy_loc = self.env.sim.data.body_xpos[self._body_geom_ids[0]][:2]
+        xy_dist = np.linalg.norm(xy_target - object_xy_loc)
+        r_hover = (1 - np.tanh(10.0 * xy_dist)) * (hover_mult - lift_mult)
+                
+        return r_reach, r_grasp, r_lift, r_hover
+
+    
 
     def compute_reward(self, achieved_goal, desired_goal, info):
         """
@@ -294,6 +363,9 @@ class RobosuiteWrapper(gym.Wrapper):
             float: environment reward
         """
         # Dummy args used to mimic Wrapper interface
+        if self.bddl_file and self.reward_shaping:
+            return self.env.reward() + max(self.staged_rewards)
+        
         return self.env.reward()
 
     def render(self): # -> RenderFrame | list[RenderFrame] | None:
