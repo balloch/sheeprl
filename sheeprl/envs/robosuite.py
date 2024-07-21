@@ -308,7 +308,7 @@ class RobosuiteWrapper(gym.Wrapper):
         
         reach_mult = 0.1
         # Grasp multiplier set to zero (reference sets it to 0.35) but implemented for completeness
-        grasp_mult = 0.0
+        grasp_mult = 0.35
         lift_mult = 0.5
         hover_mult = 0.7
         
@@ -332,7 +332,7 @@ class RobosuiteWrapper(gym.Wrapper):
         r_lift = 0.0
         # Note: Based on experimentation this reward seems to be non-negligible without actually picking the object up
         # Based on the reference the robosuite environment seems to have similar behavior
-        if r_grasp > 0.0 or grasp_mult == 0.0 or True:
+        if r_grasp > 0.0 or grasp_mult == 0.0:
             z_target = self.env.sim.data.body_xpos[self._body_geom_ids[1]][2]
             object_z_loc = self.env.sim.data.body_xpos[self._body_geom_ids[0]][2]
             z_dist = np.maximum(z_target - object_z_loc, 0)
@@ -345,7 +345,7 @@ class RobosuiteWrapper(gym.Wrapper):
         object_xy_loc = self.env.sim.data.body_xpos[self._body_geom_ids[0]][:2]
         xy_dist = np.linalg.norm(xy_target - object_xy_loc)
         r_hover = (1 - np.tanh(10.0 * xy_dist)) * (hover_mult - lift_mult)
-                
+        
         return r_reach, r_grasp, r_lift, r_hover
 
     
