@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
     from sheeprl.algos.offline_dreamer.agent import PlayerODV3
 
+
+EEF_SIZE = 0.04
 AGGREGATOR_KEYS = {
     "Rewards/rew_avg",
     "Game/ep_len_avg",
@@ -35,7 +37,30 @@ AGGREGATOR_KEYS = {
     "Grads/critic",
 }
 MODELS_TO_REGISTER = {"world_model", "actor", "critic", "target_critic", "moments"}
-
+CONCEPT_DICT = {
+    'white_yellow_mug': 0,
+    'butter': 1,
+    'wine_bottle': 2,
+    'yellow_book': 3,
+    'ketchup': 4,
+    'tomato_sauce': 5,
+    'orange_juice': 6,
+    'porcelain_mug': 7,
+    'chefmate_8_frypan': 8,
+    'cream_cheese': 9,
+    'plate': 10,
+    'chocolate_pudding': 11,
+    'red_coffee_mug': 12,
+    'moka_pot': 13,
+    'basket': 14,
+    'milk': 15,
+    'white_bowl': 16,
+    'wooden_tray': 17,
+    'akita_black_bowl': 18,
+    'alphabet_soup': 19,
+    'black_book': 20,
+    'new_salad_dressing': 21
+}
 
 class Moments(nn.Module):
     def __init__(
@@ -233,3 +258,38 @@ def log_models_from_checkpoint(
         model_info["moments"] = mlflow.pytorch.log_model(moments, artifact_path="moments")
         mlflow.log_dict(cfg.to_log, "config.json")
     return model_info
+
+def get_concepts(obs, env):
+    concept_arr = np.zeros(len(CONCEPT_DICT.keys()) + 2)
+    above_object = 0
+    above_target = 0
+    for key in obs.keys():
+        if '_pos' in key and 'robot' not in key: # filter to only object positions
+            object = "_".join(key.split("_", -1)[:-1])
+            object_class = "_".join(key.split("_", -2)[:-2])
+            concept_arr[CONCEPT_DICT[object_class]] = 1
+            if abs(obs['robot0_eef_pos'][0] - obs[key][0]) <= EEF_SIZE and \
+            abs(obs['robot0_eef_pos'][1] - obs[key][1]) <= EEF_SIZE:
+                above_object = 1
+                if object == env.parsed_problem['goal_state'][0][1]: # assumes only one goal, with [on, obj1, obj2] format
+                    above_target = 1
+
+    concept_arr[-2] = above_object
+    concept_arr[-1] = above_target
+    return concept_arr
+
+def get_concepts_from_replay(env, start_state, actions):
+    env.reset()
+    env.sim.reset()
+    env.sim.set_state_from_flattened(start_state)
+    env.sim.forward()
+    obs = env._get_observations()
+    concept_list = []
+    concept_arr = get_concepts(obs, env)
+    concept_list.append(concept_arr)
+    for _, action in enumerate(actions):
+        obs, _, _, _ = env.step(action)
+        concept_arr = get_concepts(obs, env)
+        concept_list.append(concept_arr)
+    return np.vstack(concept_list)
+        
