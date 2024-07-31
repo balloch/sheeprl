@@ -21,6 +21,7 @@ class RobosuiteWrapper(gym.Wrapper):
         env_config: str,
         robot: str,
         bddl_file = None,
+        initial_joint_positions : tuple[int] | None = None,
         controller: Any = 'OSC_POSE',
         hard_reset: bool = False,
         horizon: int = 500,
@@ -55,6 +56,7 @@ class RobosuiteWrapper(gym.Wrapper):
         self.env_config = env_config
         self.robot = robot
         self.bddl_file = bddl_file
+        self.initial_joint_positions = initial_joint_positions
         self.controller = controller
         self.hard_reset = hard_reset
         self.horizon = horizon
@@ -114,6 +116,11 @@ class RobosuiteWrapper(gym.Wrapper):
         super().__init__(env)
 
         obs = self.env.reset()
+        
+        if initial_joint_positions:
+            self.env.robots[0].set_robot_joint_positions(self.initial_joint_positions)
+            # Refresh observation without stepping
+            obs = self.env._get_observations(force_update=True)
 
         obs_spec = self.env.observation_spec()
 
@@ -275,6 +282,11 @@ class RobosuiteWrapper(gym.Wrapper):
             seed = np.random.RandomState(seed)
         # self.env.task._random = seed
         orig_obs = self.env.reset()
+        if self.initial_joint_positions:
+            self.env.robots[0].set_robot_joint_positions(self.initial_joint_positions)
+            # Resample without stepping
+            orig_obs = self.env._get_observations(force_update=True)
+        
         self.current_state = orig_obs
         # self.current_state = _flatten_obs(time_step.observation)
         obs = self._get_obs(orig_obs)
