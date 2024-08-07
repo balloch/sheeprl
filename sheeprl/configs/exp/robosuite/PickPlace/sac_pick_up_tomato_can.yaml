@@ -1,0 +1,57 @@
+# @package _global_
+defaults:
+  - override /algo: sac
+  - override /env: robosuite
+  - override /model_manager: sac
+  - _self_
+
+####################################
+# PickPlace Benchmark              #
+# Best recorded run, but fails to  #
+# converge reliably with SAC       #
+####################################
+
+
+# Algorithm
+algo:
+  total_steps: 10000000 # Ran to completion
+  learning_starts: 5000
+  per_rank_batch_size: 32
+  replay_ratio: 0.5
+  mlp_keys:
+    encoder: [state, object-state]
+# Checkpoint
+checkpoint:
+  every: 50000
+
+# Buffer
+buffer:
+  size: 100000
+  checkpoint: False
+  sample_next_obs: False
+
+env:
+  num_envs: 2
+  wrapper: 
+    bddl_file: scenes/LIBERO_OBJECT_SCENE_pick_up_the_tomato_sauce_and_place_it_in_the_basket.bddl
+    use_camera_obs: True
+
+fabric:
+  accelerator: cuda
+  precision: bf16-mixed
+  devices: 2
+metric:
+  aggregator:
+    metrics:
+      Loss/value_loss:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Loss/policy_loss:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Loss/alpha_loss:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Loss/entropy_loss:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: ${metric.sync_on_compute}
