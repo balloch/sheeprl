@@ -987,10 +987,10 @@ class CEM(nn.Module):
                 ### 2 get prob given concept
                 if(probs==None):
                     logits =  self.concept_prob_generators[c](context)
-                    prob_gumbel = F.softmax(logits)
+                    prob_gumbel = logits.softmax(dim=-1)
                 else:
                     logits=probs[c]
-                    prob_gumbel = F.softmax(logits)
+                    prob_gumbel =logits.softmax(dim=-1)
 
                 # import pdb; pdb.set_trace()
                 for i in range(self.concept_bins[c]):
