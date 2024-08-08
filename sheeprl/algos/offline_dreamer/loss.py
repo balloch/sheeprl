@@ -22,12 +22,14 @@ def get_concept_loss(model, predicted_concepts, concepts, isList=False):
 	loss_ce = torch.nn.CrossEntropyLoss()
 	concept_loss_lst=[]
 	for c in range(model.n_concepts):
-		start,end = get_concept_index(model,c)
-		c_predicted_concepts=predicted_concepts[:,start:end]
+		start, end = get_concept_index(model,c)
+		c_predicted_concepts=predicted_concepts[:, :, start:end]
 		if(not isList):
-			c_real_concepts=concepts[:,start:end]
+			c_real_concepts=concepts[:, :, c].to(torch.int64)
+			c_real_concepts = torch.nn.functional.one_hot(c_real_concepts, num_classes=end-start).to(torch.float32)
 		else:
 			c_real_concepts=concepts[c]
+                  
 		c_concept_loss = loss_ce(c_predicted_concepts, c_real_concepts)
 		concept_loss+=c_concept_loss
 		concept_loss_lst.append(c_concept_loss)
@@ -124,10 +126,8 @@ def reconstruction_loss(
     else:
         #TODO replace with actual concepts
         pred_concepts, real_concept_latent, real_non_concept_latent, rand_concept_latent, rand_non_concept_latent = cem_data
-        real_concepts = (torch.rand(pred_concepts.size()) > 0.5) * 1
         pred_concepts = pred_concepts.float()
-        real_concepts = real_concepts.float()
-        concept_loss, _ = get_concept_loss(world_model.cem, pred_concepts, real_concepts)
+        concept_loss, _ = get_concept_loss(world_model.cem, pred_concepts, observations['concepts'])
         orthognality_loss = 0
         for c in range(world_model.cem.n_concepts):
             orthognality_loss+=(OrthogonalProjectionLoss(real_concept_latent[:, :, c*world_model.cem.emb_size: (c*world_model.cem.emb_size) + world_model.cem.emb_size], real_non_concept_latent))

@@ -80,6 +80,7 @@ class RobosuiteWrapper(gym.Wrapper):
             use_camera_obs=self.use_camera_obs,
             control_freq=self.control_freq,
         )
+
         extra_robosuite_make_args=dict(
             env_name=self.env_name,
         )
@@ -114,7 +115,6 @@ class RobosuiteWrapper(gym.Wrapper):
         super().__init__(env)
 
         obs = self.env.reset()
-
         obs_spec = self.env.observation_spec()
 
         self._height = obs['agentview_image'].shape[0]
@@ -135,6 +135,13 @@ class RobosuiteWrapper(gym.Wrapper):
                 keys += [f"{cam_name}_image" for cam_name in self.env.camera_names]
                 obs_shape = (3, self._height, self._width) if channels_first else (self._height, self._width, 3)
                 obs_space["rgb"] = spaces.Box(low=0, high=255, shape=obs_shape, dtype=np.uint8)
+            for obs_key in obs.keys():
+                if '_pos' in obs_key:
+                    keys += [obs_key]
+                    obs_space[obs_key] = spaces.Box(low=-1,
+                                                high=1,
+                                                shape=obs_spec[obs_key].shape,
+                                                dtype=obs_spec[obs_key].dtype)
             # Iterate over all robots to add to state
             for idx in range(len(self.env.robots)):
                 keys += ["robot{}_proprio-state".format(idx)]
@@ -195,6 +202,9 @@ class RobosuiteWrapper(gym.Wrapper):
             obs["rgb"] = rgb_obs
         if self._from_vectors:
             obs["state"] = obs_data["robot{}_proprio-state".format(0)]
+        for obs_key in obs_data.keys():
+            if '_pos' in obs_key:
+                obs[obs_key] = obs_data[obs_key]
         return obs
 
     def _flatten_obs(self, obs_dict, verbose=False):

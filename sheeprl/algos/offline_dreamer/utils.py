@@ -260,23 +260,27 @@ def log_models_from_checkpoint(
     return model_info
 
 def get_concepts(obs, env):
-    concept_arr = np.zeros(len(CONCEPT_DICT.keys()) + 2)
-    above_object = 0
-    above_target = 0
-    for key in obs.keys():
-        if '_pos' in key and 'robot' not in key: # filter to only object positions
-            object = "_".join(key.split("_", -1)[:-1])
-            object_class = "_".join(key.split("_", -2)[:-2])
-            concept_arr[CONCEPT_DICT[object_class]] = 1
-            if abs(obs['robot0_eef_pos'][0] - obs[key][0]) <= EEF_SIZE and \
-            abs(obs['robot0_eef_pos'][1] - obs[key][1]) <= EEF_SIZE:
-                above_object = 1
-                if object == env.parsed_problem['goal_state'][0][1]: # assumes only one goal, with [on, obj1, obj2] format
-                    above_target = 1
+    concept_list = []
+    for i in range(len(env.envs)):
+        concept_arr = np.zeros(len(CONCEPT_DICT.keys()) + 2)
+        above_object = 0
+        above_target = 0
+        for key in obs.keys():
+            if '_pos' in key and 'robot' not in key: # filter to only object positions
+                object = "_".join(key.split("_", -1)[:-1])
+                object_class = "_".join(key.split("_", -2)[:-2])
+                concept_arr[CONCEPT_DICT[object_class]] = 1
+                if abs(obs['robot0_eef_pos'][i][0] - obs[key][i][0]) <= EEF_SIZE and \
+                abs(obs['robot0_eef_pos'][i][1] - obs[key][i][1]) <= EEF_SIZE:
+                    above_object = 1
+                    if object == env.envs[i].parsed_problem['goal_state'][0][1]: # env.envs[0] assumes only one goal, with [on, obj1, obj2] format
+                        above_target = 1
 
-    concept_arr[-2] = above_object
-    concept_arr[-1] = above_target
-    return concept_arr
+        concept_arr[-2] = above_object
+        concept_arr[-1] = above_target
+        concept_list.append(concept_arr)
+
+    return np.expand_dims(np.vstack(concept_list), 0)
 
 def get_concepts_from_replay(env, start_state, actions):
     env.reset()

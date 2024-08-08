@@ -24,7 +24,7 @@ from torchmetrics import SumMetric
 
 from sheeprl.algos.offline_dreamer.agent import WorldModel, CBWM, build_agent
 from sheeprl.algos.offline_dreamer.loss import reconstruction_loss
-from sheeprl.algos.offline_dreamer.utils import Moments, compute_lambda_values, prepare_obs, test
+from sheeprl.algos.offline_dreamer.utils import Moments, compute_lambda_values, prepare_obs, test, get_concepts
 from sheeprl.data.buffers import EnvIndependentReplayBuffer, SequentialReplayBuffer
 from sheeprl.envs.wrappers import RestartOnException
 from sheeprl.utils.distribution import (
@@ -227,6 +227,7 @@ def train(
     device = fabric.device
     batch_obs = {k: data[k] / 255.0 - 0.5 for k in cfg.algo.cnn_keys.encoder}
     batch_obs.update({k: data[k] for k in cfg.algo.mlp_keys.encoder})
+    batch_obs['concepts'] = data['concepts']
     data["is_first"][0, :] = torch.ones_like(data["is_first"][0, :])
 
     # Given how the environment interaction works, we remove the last actions
@@ -639,6 +640,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any]):
     step_data["truncated"] = np.zeros((1, cfg.env.num_envs, 1))
     step_data["terminated"] = np.zeros((1, cfg.env.num_envs, 1))
     step_data["is_first"] = np.ones_like(step_data["terminated"])
+    step_data["concepts"] = get_concepts(obs, envs)
     player.init_states()
 
     cumulative_per_rank_gradient_steps = 0
@@ -687,6 +689,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any]):
                 )
                 dones = np.logical_or(terminated, truncated).astype(np.uint8)
 
+            step_data["concepts"] = get_concepts(obs, envs)
             step_data["is_first"] = np.zeros_like(step_data["terminated"])
             if "restart_on_exception" in infos:
                 for i, agent_roe in enumerate(infos["restart_on_exception"]):
