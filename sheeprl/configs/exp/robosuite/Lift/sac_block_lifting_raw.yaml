@@ -1,0 +1,156 @@
+num_threads: 1
+float32_matmul_precision: high
+dry_run: false
+seed: 42
+torch_use_deterministic_algorithms: false
+torch_backends_cudnn_benchmark: true
+torch_backends_cudnn_deterministic: false
+cublas_workspace_config: null
+exp_name: sac_Panda_Lift
+run_name: 2024-08-09_03-07-45_sac_Panda_Lift_42
+root_dir: sac/Panda_Lift
+algo:
+  name: sac
+  total_steps: 3000000
+  per_rank_batch_size: 128
+  run_test: true
+  cnn_keys:
+    encoder: []
+  mlp_keys:
+    encoder:
+    - state
+    - object-state
+  actor:
+    optimizer:
+      _target_: torch.optim.Adam
+      lr: 0.0003
+      eps: 0.0001
+      weight_decay: 0
+      betas:
+      - 0.9
+      - 0.999
+    hidden_size: 256
+  critic:
+    optimizer:
+      _target_: torch.optim.Adam
+      lr: 0.0003
+      eps: 0.0001
+      weight_decay: 0
+      betas:
+      - 0.9
+      - 0.999
+    'n': 2
+    hidden_size: 256
+    target_network_frequency: 1
+  alpha:
+    optimizer:
+      _target_: torch.optim.Adam
+      lr: 0.0003
+      eps: 0.0001
+      weight_decay: 0
+      betas:
+      - 0.9
+      - 0.999
+    alpha: 1.0
+  tau: 0.005
+  gamma: 0.99
+  hidden_size: 256
+  replay_ratio: 1
+  learning_starts: 1000
+  per_rank_pretrain_steps: 0
+buffer:
+  size: 1000000
+  memmap: true
+  validate_args: false
+  from_numpy: false
+  checkpoint: false
+  sample_next_obs: false
+checkpoint:
+  every: 50000
+  resume_from: null
+  save_last: true
+  keep_last: 5
+distribution:
+  validate_args: false
+env:
+  id: Panda_Lift
+  num_envs: 1
+  frame_stack: 1
+  sync_env: true
+  screen_size: 64
+  action_repeat: 1
+  grayscale: false
+  clip_rewards: false
+  capture_video: true
+  frame_stack_dilation: 1
+  actions_as_observation:
+    num_stack: -1
+    noop: You MUST define the NOOP
+    dilation: 1
+  max_episode_steps: 1000
+  reward_as_observation: false
+  wrapper:
+    _target_: sheeprl.envs.robosuite.RobosuiteWrapper
+    env_name: Lift
+    env_config: single-arm-opposed
+    robot: Panda
+    bddl_file: null
+    controller: OSC_POSE
+    hard_reset: false
+    horizon: 500
+    reward_scale: 1.0
+    reward_shaping: true
+    ignore_done: true
+    has_renderer: false
+    has_offscreen_renderer: true
+    use_camera_obs: true
+    control_freq: 20
+fabric:
+  _target_: lightning.fabric.Fabric
+  devices: 2
+  num_nodes: 1
+  strategy: auto
+  accelerator: cuda
+  precision: bf16-mixed
+  callbacks:
+  - _target_: sheeprl.utils.callback.CheckpointCallback
+    keep_last: 5
+metric:
+  log_every: 5000
+  disable_timer: false
+  log_level: 1
+  sync_on_compute: false
+  aggregator:
+    _target_: sheeprl.utils.metric.MetricAggregator
+    raise_on_missing: false
+    metrics:
+      Rewards/rew_avg:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: false
+      Game/ep_len_avg:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: false
+      Loss/value_loss:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: false
+      Loss/policy_loss:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: false
+      Loss/alpha_loss:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: false
+  logger:
+    _target_: lightning.fabric.loggers.TensorBoardLogger
+    name: 2024-08-09_03-07-45_sac_Panda_Lift_42
+    root_dir: logs/runs/sac/Panda_Lift
+    version: null
+    default_hp_metric: true
+    prefix: ''
+    sub_dir: null
+model_manager:
+  disabled: true
+  models:
+    agent:
+      model_name: sac_Panda_Lift_agent
+      description: SAC Agent in Panda_Lift Environment
+      tags: {}
