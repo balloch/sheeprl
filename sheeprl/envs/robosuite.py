@@ -143,6 +143,10 @@ class RobosuiteWrapper(gym.Wrapper):
             # Add object obs if requested
             if self.env.use_object_obs:
                 keys += ["object-state"]
+                obs_space["object-state"] = spaces.Box(low=-1,
+                                                       high=1,
+                                                       shape=obs_spec["object-state"].shape,
+                                                       dtype=obs_spec["object-state"].dtype)
             # Add image obs if requested
             if self.env.use_camera_obs:
                 keys += [f"{cam_name}_image" for cam_name in self.env.camera_names]
@@ -208,6 +212,8 @@ class RobosuiteWrapper(gym.Wrapper):
             obs["rgb"] = rgb_obs
         if self._from_vectors:
             obs["state"] = obs_data["robot{}_proprio-state".format(0)]
+        if self.env.use_object_obs:
+            obs["object-state"] = obs_data["object-state"]
         return obs
 
     def _flatten_obs(self, obs_dict, verbose=False):
