@@ -26,6 +26,7 @@ class RobosuiteWrapper(gym.Wrapper):
         horizon: int = 500,
         reward_scale: float = 1.0,
         reward_shaping: bool = True,
+        reward_stage_multipliers: list[int] = [0.1, 0.35, 0.5, 7],
         ignore_done: bool = True,
         has_renderer: bool = False,
         has_offscreen_renderer: bool = False,
@@ -120,6 +121,7 @@ class RobosuiteWrapper(gym.Wrapper):
                 self._goal_object = env.objects_dict[goal_object]
                 self._body_geom_ids = (env.sim.model.body_name2id(self._target_object.root_body),
                                        env.sim.model.body_name2id(self._goal_object.root_body))
+                self.reward_stage_multipliers = reward_stage_multipliers
         else:
             env = suite.make(**libero_args,
                              **extra_robosuite_make_args)
@@ -306,11 +308,11 @@ class RobosuiteWrapper(gym.Wrapper):
         # The suite.make environment implements its own staged rewards
         assert self.bddl_file
         
-        reach_mult = 0.1
+        reach_mult = self.reward_stage_multipliers[0]
         # Grasp multiplier set to zero (reference sets it to 0.35) but implemented for completeness
-        grasp_mult = 0.35
-        lift_mult = 0.5
-        hover_mult = 0.7
+        grasp_mult = self.reward_stage_multipliers[1]
+        lift_mult = self.reward_stage_multipliers[2]
+        hover_mult = self.reward_stage_multipliers[3]
         
         r_reach = 0
         dist = self.env._gripper_to_target(

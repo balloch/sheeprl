@@ -20,6 +20,7 @@ wrapper:
   horizon: 500
   reward_scale: 1.0
   reward_shaping: True
+  reward_stage_multipliers: [0.1, 0.35, 0.5, 0.7]
   ignore_done: True
   has_renderer: False
   has_offscreen_renderer: True
