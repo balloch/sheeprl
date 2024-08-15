@@ -1,0 +1,61 @@
+# @package _global_
+defaults:
+  - override /algo: sac
+  - override /env: robosuite
+  - override /model_manager: sac
+  - _self_
+
+##############################################################
+# PickPlace Benchmark                                        #
+# Picking up the tomato sauce starting from a close position #
+# All rewards enabled                                        #
+##############################################################
+exp_name: sac_Panda_PickPlace_close_all_rewards
+root_dir: sac/Panda_PickPlace
+
+# Algorithm
+algo:
+  total_steps: 3000000
+  learning_starts: 5000
+  per_rank_batch_size: 512
+  replay_ratio: 1
+  mlp_keys:
+    encoder: [state, object-state]
+# Checkpoint
+checkpoint:
+  every: 50000
+
+# Buffer
+buffer:
+  size: 3000000
+  checkpoint: False
+  sample_next_obs: False
+
+env:
+  num_envs: 1
+  wrapper: 
+    bddl_file: scenes/LIBERO_OBJECT_SCENE_pick_up_the_tomato_sauce_and_place_it_in_the_basket.bddl
+    reward_shaping: True
+    reward_stage_multipliers: [0.1, 0.35, 0.5, 0.7]
+    initial_joint_positions: [-0.2945, 0.3927, 0, -2.618, 0.0, 3.1415, 0.7854]
+    use_camera_obs: True
+
+fabric:
+  accelerator: gpu
+  precision: bf16-mixed
+  devices: [0]
+metric:
+  aggregator:
+    metrics:
+      Loss/value_loss:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Loss/policy_loss:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Loss/alpha_loss:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Loss/entropy_loss:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: ${metric.sync_on_compute}
