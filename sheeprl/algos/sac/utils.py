@@ -24,6 +24,16 @@ AGGREGATOR_KEYS = {
     "Loss/value_loss",
     "Loss/policy_loss",
     "Loss/alpha_loss",
+    "Rewards/rew_avg_ep",
+    "Rewards/rew_max_ep",
+    "Rewards/reach_avg_ep",
+    "Rewards/reach_max_ep",
+    "Rewards/grasp_avg_ep",
+    "Rewards/grasp_max_ep",
+    "Rewards/lift_avg_ep",
+    "Rewards/lift_max_ep",
+    "Rewards/hover_avg_ep",
+    "Rewards/hover_max_ep",
 }
 MODELS_TO_REGISTER = {"agent"}
 

@@ -144,6 +144,10 @@ class RobosuiteWrapper(gym.Wrapper):
             # Add object obs if requested
             if self.env.use_object_obs:
                 keys += ["object-state"]
+                obs_space["object-state"] = spaces.Box(low=-1,
+                                                    high=1,
+                                                    shape=obs_spec["object-state"].shape,
+                                                    dtype=obs_spec["object-state"].dtype)
             # Add image obs if requested
             if self.env.use_camera_obs:
                 keys += [f"{cam_name}_image" for cam_name in self.env.camera_names]
@@ -209,6 +213,8 @@ class RobosuiteWrapper(gym.Wrapper):
             obs["rgb"] = rgb_obs
         if self._from_vectors:
             obs["state"] = obs_data["robot{}_proprio-state".format(0)]
+        if self.env.use_object_obs:
+            obs["object-state"]  = obs_data["object-state"]
         return obs
 
     def _flatten_obs(self, obs_dict, verbose=False):
@@ -274,14 +280,23 @@ class RobosuiteWrapper(gym.Wrapper):
         # self.current_state = _flatten_obs(time_step.observation)
         obs = self._get_obs(time_step[0])
         reward = time_step[1]
-        if self.reward_shaping and self.bddl_file:
-            reward += self.staged_rewards()
         terminated = time_step[2]
         truncated = time_step[2]
         # terminated = truncated
         infos = time_step[3]
         infos["discount"] = .997  # TODO: I don't know if thats correct
         infos["internal_state"] = time_step[0]
+        
+        if self.reward_shaping and self.bddl_file:
+            r_reach, r_grasp, r_lift, r_hover = self.staged_rewards()
+            reward += sum([r_reach, r_grasp, r_lift, r_hover])
+            infos["staged_rewards"] = {
+                'reach': r_reach,
+                'grasp': r_grasp,
+                'lift': r_lift,
+                'hover': r_hover
+            }
+        
         return obs, reward, terminated, truncated, infos
 
     def reset(
@@ -432,7 +447,7 @@ class RobosuiteWrapper(gym.Wrapper):
         # print("r_reach: {}, r_grasp: {}, r_lift: {}, r_hover: {}".format(r_reach, r_grasp, r_lift, r_hover))
 
                 
-        return r_reach + r_grasp + r_lift + r_hover
+        return r_reach, r_grasp, r_lift, r_hover
 
     
 

@@ -262,6 +262,20 @@ def main(fabric: Fabric, cfg: Dict[str, Any]):
             next_obs, rewards, terminated, truncated, infos = envs.step(actions.reshape(envs.action_space.shape))
             rewards = rewards.reshape(cfg.env.num_envs, -1)
 
+        if cfg.metric.log_level > 0 and aggregator and not aggregator.disabled and "staged_rewards" in infos:
+            for i, (reward, staged_rewards) in enumerate(zip(rewards, infos["staged_rewards"])):
+                aggregator.update("Rewards/rew_avg_ep", reward)
+                aggregator.update("Rewards/rew_max_ep", reward)
+                if staged_rewards is not None:
+                    aggregator.update("Rewards/reach_avg_ep", staged_rewards["reach"])
+                    aggregator.update("Rewards/reach_max_ep", staged_rewards["reach"])
+                    aggregator.update("Rewards/grasp_avg_ep", staged_rewards["grasp"])
+                    aggregator.update("Rewards/grasp_max_ep", staged_rewards["grasp"])
+                    aggregator.update("Rewards/lift_avg_ep", staged_rewards["lift"])
+                    aggregator.update("Rewards/lift_max_ep", staged_rewards["lift"])
+                    aggregator.update("Rewards/hover_avg_ep", staged_rewards["hover"])
+                    aggregator.update("Rewards/hover_max_ep", staged_rewards["hover"])
+
         if cfg.metric.log_level > 0 and "final_info" in infos:
             for i, agent_ep_info in enumerate(infos["final_info"]):
                 if agent_ep_info is not None:
