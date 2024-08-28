@@ -67,7 +67,7 @@
     butter_1 - butter
     orange_juice_1 - orange_juice
     chocolate_pudding_1 - chocolate_pudding
-    bbq_sauce_1 - bbq_sauce
+    ketchup_1 - ketchup
   )
 
   (:obj_of_interest
@@ -81,7 +81,7 @@
     (On tomato_sauce_1 floor_other_object_region_1)
     (On orange_juice_1 floor_other_object_region_2)
     (On chocolate_pudding_1 floor_other_object_region_3)
-    (On bbq_sauce_1 floor_other_object_region_4)
+    (On ketchup_1 floor_other_object_region_4)
     (On basket_1 floor_bin_region)
   )
 

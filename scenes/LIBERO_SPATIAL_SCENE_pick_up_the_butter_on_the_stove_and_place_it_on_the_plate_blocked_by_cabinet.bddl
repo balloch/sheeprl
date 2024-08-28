@@ -19,7 +19,11 @@
       (box_region
           (:target main_table)
           (:ranges (
-              (0.06 0.02 0.08 0.04)
+              (0.02 -0.28 0.04 -0.26)
+            )
+          )
+          (:yaw_rotation (
+              (2.6613777765410678 2.7242096296128633)
             )
           )
       )
@@ -68,7 +72,7 @@
       (cabinet_region
           (:target main_table)
           (:ranges (
-              (0.02 -0.28 0.04 -0.26)
+              (0.04 0.00 0.06 0.02)
             )
           )
           (:yaw_rotation (
@@ -108,7 +112,7 @@
 
   (:objects
     akita_black_bowl_1 - akita_black_bowl
-    cookies_1 - cookies
+    butter_1 - butter
     glazed_rim_porcelain_ramekin_1 - glazed_rim_porcelain_ramekin
     plate_1 - plate
   )
@@ -119,7 +123,7 @@
   )
 
   (:init
-    (On cookies_1 flat_stove_1_cook_region)
+    (On butter_1 flat_stove_1_cook_region)
     (On plate_1 main_table_plate_region)
     (On akita_black_bowl_1 main_table_box_region)
     (On glazed_rim_porcelain_ramekin_1 main_table_ramekin_region)
@@ -128,7 +132,7 @@
   )
 
   (:goal
-    (On cookies_1 plate_1)
+    (On butter_1 plate_1)
   )
 
 )
