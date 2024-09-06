@@ -1062,7 +1062,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                             if len(v) == 0:
                                 # print('not updating, no new data (for else)')
                                 break
-                            aggregator.update(k, np.array(v).reshape(1,4,-1))
+                            aggregator.update(k, np.array(v).reshape(1,cfg.env.num_envs,-1))
                             # fabric.log(f"Env/{k}", v, policy_step)
 
                 # Sync distributed metrics

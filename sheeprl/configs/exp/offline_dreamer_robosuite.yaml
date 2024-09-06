@@ -11,7 +11,7 @@ seed: 5
 
 # # Environment
 env:
-  max_episode_steps: 100
+  max_episode_steps: 1000
 
 #   action_repeat: 2
 #   max_episode_steps: -1
@@ -45,7 +45,7 @@ algo:
 
 # Metric
 metric:
-  log_every: 100
+  log_every: 1000
 
 fabric:
   accelerator: cuda

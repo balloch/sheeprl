@@ -22,7 +22,7 @@ algo:
 
 # Checkpoint
 checkpoint:
-  every: 100000
+  every: 10000
 
 # Buffer
 buffer:
