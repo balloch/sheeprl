@@ -211,7 +211,7 @@ def train(
     actions_dim: Sequence[int],
     moments: Moments,
     compiled_dynamic_learning: Callable,
-    compiled_behaviour_learning: Callable,
+    compiled_behaviour_learning: Callable | None,
     compiled_compute_lambda_values: Callable,
 ) -> None:
     """Runs one-step update of the agent.
@@ -345,105 +345,106 @@ def train(
     world_optimizer.step()
 
     # Behaviour Learning
-    imagined_trajectories, imagined_actions = compiled_behaviour_learning(
-        posteriors,
-        recurrent_states,
-        data,
-        world_model,
-        actor,
-        stoch_state_size,
-        recurrent_state_size,
-        batch_size,
-        sequence_length,
-        cfg.algo.horizon,
-        device,
-    )
-
-    # Predict values, rewards and continues
-    predicted_values = TwoHotEncodingDistribution(critic(imagined_trajectories), dims=1).mean
-    predicted_rewards = TwoHotEncodingDistribution(world_model.reward_model(imagined_trajectories), dims=1).mean
-    continues = Independent(BernoulliSafeMode(logits=world_model.continue_model(imagined_trajectories)), 1).mode
-    true_continue = (1 - data["terminated"]).flatten().reshape(1, -1, 1)
-    continues = torch.cat((true_continue, continues[1:]))
-
-    # Estimate lambda-values
-    lambda_values = compiled_compute_lambda_values(
-        predicted_rewards[1:],
-        predicted_values[1:],
-        continues[1:] * cfg.algo.gamma,
-        lmbda=cfg.algo.lmbda,
-    )
-
-    # Compute the discounts to multiply the lambda values to
-    with torch.no_grad():
-        discount = torch.cumprod(continues * cfg.algo.gamma, dim=0) / cfg.algo.gamma
-
-    # Actor optimization step. Eq. 11 from the paper
-    # Given the following diagram, with H=3
-    # Actions:          [a'0]    [a'1]    [a'2]    a'3
-    #                    ^ \      ^ \      ^ \     ^
-    #                   /   \    /   \    /   \   /
-    #                  /     \  /     \  /     \ /
-    # States:       [z0] -> [z'1] -> [z'2] ->  z'3
-    # Values:       [v'0]   [v'1]    [v'2]     v'3
-    # Lambda-values:        [l'1]    [l'2]    [l'3]
-    # Entropies:    [e'0]   [e'1]    [e'2]
-    actor_optimizer.zero_grad(set_to_none=True)
-    policies: Sequence[Distribution] = actor(imagined_trajectories.detach())[1]
-
-    baseline = predicted_values[:-1]
-    offset, invscale = moments(lambda_values, fabric)
-    normed_lambda_values = (lambda_values - offset) / invscale
-    normed_baseline = (baseline - offset) / invscale
-    advantage = normed_lambda_values - normed_baseline
-    if is_continuous:
-        objective = advantage
-    else:
-        objective = (
-            torch.stack(
-                [
-                    p.log_prob(imgnd_act.detach()).unsqueeze(-1)[:-1]
-                    for p, imgnd_act in zip(policies, torch.split(imagined_actions, actions_dim, dim=-1))
-                ],
-                dim=-1,
-            ).sum(dim=-1)
-            * advantage.detach()
+    if compiled_behaviour_learning is not None:
+        imagined_trajectories, imagined_actions = compiled_behaviour_learning(
+            posteriors,
+            recurrent_states,
+            data,
+            world_model,
+            actor,
+            stoch_state_size,
+            recurrent_state_size,
+            batch_size,
+            sequence_length,
+            cfg.algo.horizon,
+            device,
         )
-    try:
-        entropy = cfg.algo.actor.ent_coef * torch.stack([p.entropy() for p in policies], -1).sum(dim=-1)
-    except NotImplementedError:
-        entropy = torch.zeros_like(objective)
-    policy_loss = -torch.mean(discount[:-1].detach() * (objective + entropy.unsqueeze(dim=-1)[:-1]))
-    fabric.backward(policy_loss)
-    actor_grads = None
-    if cfg.algo.actor.clip_gradients is not None and cfg.algo.actor.clip_gradients > 0:
-        actor_grads = fabric.clip_gradients(
-            module=actor, optimizer=actor_optimizer, max_norm=cfg.algo.actor.clip_gradients, error_if_nonfinite=False
+
+        # Predict values, rewards and continues
+        predicted_values = TwoHotEncodingDistribution(critic(imagined_trajectories), dims=1).mean
+        predicted_rewards = TwoHotEncodingDistribution(world_model.reward_model(imagined_trajectories), dims=1).mean
+        continues = Independent(BernoulliSafeMode(logits=world_model.continue_model(imagined_trajectories)), 1).mode
+        true_continue = (1 - data["terminated"]).flatten().reshape(1, -1, 1)
+        continues = torch.cat((true_continue, continues[1:]))
+
+        # Estimate lambda-values
+        lambda_values = compiled_compute_lambda_values(
+            predicted_rewards[1:],
+            predicted_values[1:],
+            continues[1:] * cfg.algo.gamma,
+            lmbda=cfg.algo.lmbda,
         )
-    actor_optimizer.step()
 
-    # Predict the values
-    qv = TwoHotEncodingDistribution(critic(imagined_trajectories.detach()[:-1]), dims=1)
-    predicted_target_values = TwoHotEncodingDistribution(
-        target_critic(imagined_trajectories.detach()[:-1]), dims=1
-    ).mean
+        # Compute the discounts to multiply the lambda values to
+        with torch.no_grad():
+            discount = torch.cumprod(continues * cfg.algo.gamma, dim=0) / cfg.algo.gamma
 
-    # Critic optimization. Eq. 10 in the paper
-    critic_optimizer.zero_grad(set_to_none=True)
-    value_loss = -qv.log_prob(lambda_values.detach())
-    value_loss = value_loss - qv.log_prob(predicted_target_values.detach())
-    value_loss = torch.mean(value_loss * discount[:-1].squeeze(-1))
+        # Actor optimization step. Eq. 11 from the paper
+        # Given the following diagram, with H=3
+        # Actions:          [a'0]    [a'1]    [a'2]    a'3
+        #                    ^ \      ^ \      ^ \     ^
+        #                   /   \    /   \    /   \   /
+        #                  /     \  /     \  /     \ /
+        # States:       [z0] -> [z'1] -> [z'2] ->  z'3
+        # Values:       [v'0]   [v'1]    [v'2]     v'3
+        # Lambda-values:        [l'1]    [l'2]    [l'3]
+        # Entropies:    [e'0]   [e'1]    [e'2]
+        actor_optimizer.zero_grad(set_to_none=True)
+        policies: Sequence[Distribution] = actor(imagined_trajectories.detach())[1]
 
-    fabric.backward(value_loss)
-    critic_grads = None
-    if cfg.algo.critic.clip_gradients is not None and cfg.algo.critic.clip_gradients > 0:
-        critic_grads = fabric.clip_gradients(
-            module=critic,
-            optimizer=critic_optimizer,
-            max_norm=cfg.algo.critic.clip_gradients,
-            error_if_nonfinite=False,
-        )
-    critic_optimizer.step()
+        baseline = predicted_values[:-1]
+        offset, invscale = moments(lambda_values, fabric)
+        normed_lambda_values = (lambda_values - offset) / invscale
+        normed_baseline = (baseline - offset) / invscale
+        advantage = normed_lambda_values - normed_baseline
+        if is_continuous:
+            objective = advantage
+        else:
+            objective = (
+                torch.stack(
+                    [
+                        p.log_prob(imgnd_act.detach()).unsqueeze(-1)[:-1]
+                        for p, imgnd_act in zip(policies, torch.split(imagined_actions, actions_dim, dim=-1))
+                    ],
+                    dim=-1,
+                ).sum(dim=-1)
+                * advantage.detach()
+            )
+        try:
+            entropy = cfg.algo.actor.ent_coef * torch.stack([p.entropy() for p in policies], -1).sum(dim=-1)
+        except NotImplementedError:
+            entropy = torch.zeros_like(objective)
+        policy_loss = -torch.mean(discount[:-1].detach() * (objective + entropy.unsqueeze(dim=-1)[:-1]))
+        fabric.backward(policy_loss)
+        actor_grads = None
+        if cfg.algo.actor.clip_gradients is not None and cfg.algo.actor.clip_gradients > 0:
+            actor_grads = fabric.clip_gradients(
+                module=actor, optimizer=actor_optimizer, max_norm=cfg.algo.actor.clip_gradients, error_if_nonfinite=False
+            )
+        actor_optimizer.step()
+
+        # Predict the values
+        qv = TwoHotEncodingDistribution(critic(imagined_trajectories.detach()[:-1]), dims=1)
+        predicted_target_values = TwoHotEncodingDistribution(
+            target_critic(imagined_trajectories.detach()[:-1]), dims=1
+        ).mean
+
+        # Critic optimization. Eq. 10 in the paper
+        critic_optimizer.zero_grad(set_to_none=True)
+        value_loss = -qv.log_prob(lambda_values.detach())
+        value_loss = value_loss - qv.log_prob(predicted_target_values.detach())
+        value_loss = torch.mean(value_loss * discount[:-1].squeeze(-1))
+
+        fabric.backward(value_loss)
+        critic_grads = None
+        if cfg.algo.critic.clip_gradients is not None and cfg.algo.critic.clip_gradients > 0:
+            critic_grads = fabric.clip_gradients(
+                module=critic,
+                optimizer=critic_optimizer,
+                max_norm=cfg.algo.critic.clip_gradients,
+                error_if_nonfinite=False,
+            )
+        critic_optimizer.step()
 
     # Log metrics
     if aggregator and not aggregator.disabled:
@@ -468,14 +469,16 @@ def train(
             "State/prior_entropy",
             Independent(OneHotCategorical(logits=priors_logits.detach()), 1).entropy().mean().detach(),
         )
-        aggregator.update("Loss/policy_loss", policy_loss.detach())
-        aggregator.update("Loss/value_loss", value_loss.detach())
+        if compiled_behaviour_learning is not None:
+            aggregator.update("Loss/policy_loss", policy_loss.detach())
+            aggregator.update("Loss/value_loss", value_loss.detach())
         if world_model_grads:
             aggregator.update("Grads/world_model", world_model_grads.mean().detach())
-        if actor_grads:
-            aggregator.update("Grads/actor", actor_grads.mean().detach())
-        if critic_grads:
-            aggregator.update("Grads/critic", critic_grads.mean().detach())
+        if compiled_behaviour_learning is not None:
+            if actor_grads:
+                aggregator.update("Grads/actor", actor_grads.mean().detach())
+            if critic_grads:
+                aggregator.update("Grads/critic", critic_grads.mean().detach())
 
     # Reset everything
     world_optimizer.zero_grad(set_to_none=True)
@@ -946,6 +949,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                         if agent_ep_info is not None:
                             ep_rew = agent_ep_info["episode"]["r"]
                             ep_len = agent_ep_info["episode"]["l"]
+                            last_ep_rew = ep_rew.mean()
                             if aggregator and not aggregator.disabled:
                                 aggregator.update("Rewards/rew_avg", ep_rew)
                                 aggregator.update("Game/ep_len_avg", ep_len)
@@ -976,11 +980,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                 dones_idxes = dones.nonzero()[0].tolist()
                 reset_envs = len(dones_idxes)
                 if reset_envs > 0:
-                    # import pdb; pdb.set_trace()
-                    rew_array = np.array([envs.envs[i].ep_returns for i in range(cfg.env.num_envs)])
-                    print(f"Reward/episode_max {rew_array.max()}")
-                    print(f"Reward/episode_mean {rew_array.mean()}")
-
                     reset_data = {}
                     for k in obs_keys:
                         reset_data[k] = (real_next_obs[k][dones_idxes])[np.newaxis]
@@ -1045,6 +1044,29 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
 
             ## Log metrics Phase
             if cfg.metric.log_level > 0 and (policy_step - last_log >= cfg.metric.log_every or iter_num == total_iters):
+                # Get envrionment metrics
+                if cfg.env.env_stats:
+                    envs_stats = {}
+                    for env in envs.envs:
+                        env_stats = env.get_env_stats(
+                            stats_dict=dict(cfg.env.env_stats),
+                            reset=True)
+                        if env_stats is None or len(list(env_stats.values())[0]) == 0:
+                            # print('not updating, no new data')
+                            break
+                        if not envs_stats:
+                            envs_stats = env_stats
+                        else:
+                            for k, v in env_stats.items():
+                                envs_stats[k].extend(v)
+                    else:  # For-else statement only if no break occurs
+                        for k, v in envs_stats.items():
+                            if len(v) == 0:
+                                # print('not updating, no new data (for else)')
+                                break
+                            aggregator.update(k, np.array(v).reshape(1,cfg.env.num_envs,-1))
+                            # fabric.log(f"Env/{k}", v, policy_step)
+
                 # Sync distributed metrics
                 if aggregator and not aggregator.disabled:
                     metrics_dict = aggregator.compute()
@@ -1056,13 +1078,10 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                     "Params/replay_ratio", cumulative_per_rank_gradient_steps * world_size / policy_step, policy_step
                 )
 
-                rew_array = np.array([envs.envs[i].ep_returns for i in range(cfg.env.num_envs)])
-                print(f"Reward/episode_max {rew_array.max()}")
-                print(f"Reward/episode_mean {rew_array.mean()}")
 
-                ## Testing: how to save when you have wandb
-                if "wandb" in cfg.metric.logger._target_.lower():
-                    fabric.logger.log_image(key="samples", images=[batch['agentview_rgb'][0,0,...]])
+                ## TODO Testing: how to save images when you have wandb
+                # if "wandb" in cfg.metric.logger._target_.lower():
+                #     fabric.logger.log_image(key="samples", images=[batch['agentview_rgb'][0,0,...]])
 
                 # Sync distributed timers
                 if not timer.disabled:
@@ -1418,7 +1437,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             print(f"Epoch {epoch}")
             for batch in dataloader:
                 print(f"iter_num={iter_num}")
-                ## Transforms to make it match env. This feels like I should be able to do it in the dataloader:
+                ## Transform data to make it match env. TODO This feels like I should be able to do it in the dataloader:
                 batch['truncated'] = batch['dones']
                 batch['terminated'] = batch['dones']
                 for obskey, obs_tmp in batch['obs'].items():
@@ -1491,7 +1510,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                                 actions_dim=actions_dim,
                                 moments=moments,
                                 compiled_dynamic_learning=compiled_dynamic_learning,
-                                compiled_behaviour_learning=compiled_behaviour_learning,
+                                compiled_behaviour_learning=None,
                                 compiled_compute_lambda_values=compiled_compute_lambda_values,
                             )
                             cumulative_per_rank_gradient_steps += 1

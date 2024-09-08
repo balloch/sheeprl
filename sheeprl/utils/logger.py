@@ -16,7 +16,11 @@ def get_logger(fabric: Fabric, cfg: Dict[str, Any]) -> Optional[Logger]:
     logger = None
     if fabric.is_global_zero and cfg.metric.log_level > 0:
         if "tensorboard" in cfg.metric.logger._target_.lower():
-            root_dir = os.path.join("logs", "runs", cfg.root_dir)
+            if os.path.isabs(cfg.root_dir):
+                root_dir = cfg.root_dir
+                cfg.metric.logger.root_dir = os.path.join(cfg.root_dir)
+            else:
+                root_dir = os.path.join("logs", "runs", cfg.root_dir)
             if root_dir != cfg.metric.logger.root_dir:
                 warnings.warn(
                     "The specified root directory for the TensorBoardLogger is different from the experiment one, "
@@ -32,7 +36,11 @@ def get_logger(fabric: Fabric, cfg: Dict[str, Any]) -> Optional[Logger]:
             cfg.metric.logger.root_dir = root_dir
             cfg.metric.logger.name = cfg.run_name
         elif "wandb" in cfg.metric.logger._target_.lower():
-            root_dir = os.path.join("logs", "runs", cfg.root_dir)
+            if os.path.isabs(cfg.root_dir):
+                root_dir = cfg.root_dir
+                cfg.metric.logger.save_dir = os.path.join(cfg.root_dir,cfg.run_name)
+            else:
+                root_dir = os.path.join("logs", "runs", cfg.root_dir)
             # if root_dir != cfg.metric.logger.save_dir:
             #     warnings.warn(
             #         "The specified root directory for the WandBLogger is different from the experiment one, "
@@ -74,7 +82,10 @@ def get_log_dir(fabric: Fabric, root_dir: str, run_name: str, share: bool = True
             log_dir = fabric.logger.log_dir
         else:
             # Otherwise the rank-zero process creates the log_dir
-            save_dir = os.path.join("logs", "runs", root_dir, run_name)
+            if os.path.isabs(root_dir):
+                save_dir = os.path.join(root_dir, run_name)
+            else:
+                save_dir = os.path.join("logs", "runs", root_dir, run_name)
             fs = get_filesystem(root_dir)
             try:
                 listdir_info = fs.listdir(save_dir)

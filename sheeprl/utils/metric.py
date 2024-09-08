@@ -116,30 +116,31 @@ class MetricAggregator:
         if not self.disabled:
             if self.metrics:
                 for k, v in self.metrics.items():
-                    reduced = v.compute()
-                    is_tensor = torch.is_tensor(reduced)
-                    if is_tensor and reduced.numel() == 1:
-                        reduced_metrics[k] = reduced.item()
-                    else:
-                        if not is_tensor:
-                            warnings.warn(
-                                f"The reduced metric {k} is not a scalar tensor: type={type(reduced)}. "
-                                "This may create problems during the logging phase.",
-                                category=RuntimeWarning,
-                            )
+                    if v.update_called:
+                        reduced = v.compute()
+                        is_tensor = torch.is_tensor(reduced)
+                        if is_tensor and reduced.numel() == 1:
+                            reduced_metrics[k] = reduced.item()
                         else:
-                            warnings.warn(
-                                f"The reduced metric {k} is not a scalar: size={v.size()}. "
-                                "This may create problems during the logging phase.",
-                                category=RuntimeWarning,
-                            )
-                        reduced_metrics[k] = reduced
+                            if not is_tensor:
+                                warnings.warn(
+                                    f"The reduced metric {k} is not a scalar tensor: type={type(reduced)}. "
+                                    "This may create problems during the logging phase.",
+                                    category=RuntimeWarning,
+                                )
+                            else:
+                                warnings.warn(
+                                    f"The reduced metric {k} is not a scalar: size={v.size()}. "
+                                    "This may create problems during the logging phase.",
+                                    category=RuntimeWarning,
+                                )
+                            reduced_metrics[k] = reduced
 
-                    is_tensor = torch.is_tensor(reduced_metrics[k])
-                    if (is_tensor and torch.isnan(reduced_metrics[k]).any()) or (
-                        not is_tensor and isnan(reduced_metrics[k])
-                    ):
-                        reduced_metrics.pop(k, None)
+                        is_tensor = torch.is_tensor(reduced_metrics[k])
+                        if (is_tensor and torch.isnan(reduced_metrics[k]).any()) or (
+                            not is_tensor and isnan(reduced_metrics[k])
+                        ):
+                            reduced_metrics.pop(k, None)
         return reduced_metrics
 
 

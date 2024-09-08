@@ -2,7 +2,7 @@
 
 defaults:
   - override /algo: offline_dreamer_S
-  - override /env: mujoco
+  - override /env: robosuite
   - override /model_manager: offline_dreamer
   - _self_
 
@@ -22,7 +22,7 @@ algo:
 
 # Checkpoint
 checkpoint:
-  every: 100000
+  every: 10000
 
 # Buffer
 buffer:
@@ -83,4 +83,34 @@ metric:
         sync_on_compute: ${metric.sync_on_compute}
       Grads/critic:
         _target_: torchmetrics.MeanMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Rewards/rew_avg_ep:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Rewards/rew_max_ep:
+        _target_: torchmetrics.MaxMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Rewards/reach_avg_ep:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Rewards/reach_max_ep:
+        _target_: torchmetrics.MaxMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Rewards/grasp_avg_ep:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Rewards/grasp_max_ep:
+        _target_: torchmetrics.MaxMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Rewards/lift_avg_ep:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Rewards/lift_max_ep:
+        _target_: torchmetrics.MaxMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Rewards/hover_avg_ep:
+        _target_: torchmetrics.MeanMetric
+        sync_on_compute: ${metric.sync_on_compute}
+      Rewards/hover_max_ep:
+        _target_: torchmetrics.MaxMetric
         sync_on_compute: ${metric.sync_on_compute}

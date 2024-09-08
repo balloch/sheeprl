@@ -1,7 +1,7 @@
 # @package _global_
 
 defaults:
-  - offline_dreamer
+  - offline_dreamer_robosuite
   - override /algo: offline_dreamer_S
   - override /env: robosuite
 #  - override /model_manager: p2e_dv3_finetuning
@@ -37,7 +37,7 @@ checkpoint:
 # Algorithm
 algo:
   offline: False
-  total_steps: 1_000_000
+  total_steps: 10_000_000
   cnn_keys:
     encoder:
       - agentview_rgb
@@ -45,7 +45,7 @@ algo:
       - agentview_rgb
   mlp_keys:
     encoder: []
-  learning_starts: 10000
+  learning_starts: 10_000
   replay_ratio: 0.5
   finetuning:
     freeze:

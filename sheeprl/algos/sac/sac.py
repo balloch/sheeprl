@@ -245,6 +245,8 @@ def main(fabric: Fabric, cfg: Dict[str, Any]):
 
     per_rank_gradient_steps = 0
     cumulative_per_rank_gradient_steps = 0
+    top_ep_rew = []
+    last_ep_rew = 0
     for iter_num in range(start_iter, total_iters + 1):
         policy_step += policy_steps_per_iter
 
@@ -267,6 +269,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any]):
                 if agent_ep_info is not None:
                     ep_rew = agent_ep_info["episode"]["r"]
                     ep_len = agent_ep_info["episode"]["l"]
+                    last_ep_rew = ep_rew.mean()
                     if aggregator and not aggregator.disabled:
                         aggregator.update("Rewards/rew_avg", ep_rew)
                         aggregator.update("Game/ep_len_avg", ep_len)
@@ -394,26 +397,31 @@ def main(fabric: Fabric, cfg: Dict[str, Any]):
         if (cfg.checkpoint.every > 0 and policy_step - last_checkpoint >= cfg.checkpoint.every) or (
             iter_num == total_iters and cfg.checkpoint.save_last
         ):
-            last_checkpoint = policy_step
-            state = {
-                "agent": agent.state_dict(),
-                "qf_optimizer": qf_optimizer.state_dict(),
-                "actor_optimizer": actor_optimizer.state_dict(),
-                "alpha_optimizer": alpha_optimizer.state_dict(),
-                "ratio": ratio.state_dict(),
-                "iter_num": iter_num * fabric.world_size,
-                "batch_size": cfg.algo.per_rank_batch_size * fabric.world_size,
-                "last_log": last_log,
-                "last_checkpoint": last_checkpoint,
-            }
-            ckpt_path = os.path.join(log_dir, f"checkpoint/ckpt_{policy_step}_{fabric.global_rank}.ckpt")
-            fabric.call(
-                "on_checkpoint_coupled",
-                fabric=fabric,
-                ckpt_path=ckpt_path,
-                state=state,
-                replay_buffer=rb if cfg.buffer.checkpoint else None,
-            )
+            if (len(top_ep_rew) < cfg.checkpoint.keep_last) or (last_ep_rew > min(top_ep_rew)):
+                if len(top_ep_rew) >= cfg.checkpoint.keep_last:
+                    top_ep_rew.remove(min(top_ep_rew))
+                top_ep_rew.append(last_ep_rew)
+                
+                last_checkpoint = policy_step
+                state = {
+                    "agent": agent.state_dict(),
+                    "qf_optimizer": qf_optimizer.state_dict(),
+                    "actor_optimizer": actor_optimizer.state_dict(),
+                    "alpha_optimizer": alpha_optimizer.state_dict(),
+                    "ratio": ratio.state_dict(),
+                    "iter_num": iter_num * fabric.world_size,
+                    "batch_size": cfg.algo.per_rank_batch_size * fabric.world_size,
+                    "last_log": last_log,
+                    "last_checkpoint": last_checkpoint,
+                }
+                ckpt_path = os.path.join(log_dir, f"checkpoint/ckpt_{policy_step}_{fabric.global_rank}.ckpt")
+                fabric.call(
+                    "on_checkpoint_coupled",
+                    fabric=fabric,
+                    ckpt_path=ckpt_path,
+                    state=state,
+                    replay_buffer=rb if cfg.buffer.checkpoint else None,
+                )
 
     envs.close()
     if fabric.is_global_zero and cfg.algo.run_test:

@@ -7,6 +7,39 @@ id: ${env.wrapper.robot}_${env.wrapper.env_name}
 action_repeat: 1
 max_episode_steps: 1000
 sync_env: True
+env_stats:
+  Rewards/reach_avg_ep:
+    - intrinsic
+    - reach
+    - mean
+  Rewards/grasp_avg_ep:
+    - intrinsic
+    - grasp
+    - mean
+  Rewards/lift_avg_ep:
+    - intrinsic
+    - lift
+    - mean
+  Rewards/hover_avg_ep:
+    - intrinsic
+    - hover
+    - mean
+  Rewards/reach_max_ep:
+    - intrinsic
+    - reach
+    - max
+  Rewards/grasp_max_ep:
+    - intrinsic
+    - grasp
+    - max
+  Rewards/lift_max_ep:
+    - intrinsic
+    - lift
+    - max
+  Rewards/hover_max_ep:
+    - intrinsic
+    - hover
+    - max
 
 # Wrapper to be instantiated
 wrapper:
@@ -18,7 +51,7 @@ wrapper:
   initial_joint_positions: null
   controller: OSC_POSE
   hard_reset: False
-  horizon: 500
+  horizon: ${env.max_episode_steps}
   reward_scale: 1.0
   reward_shaping: True
   ignore_done: True
@@ -27,6 +60,7 @@ wrapper:
   use_camera_obs: True
   use_vector_obs: False
   control_freq: 20
+  action_repeat: ${env.action_repeat}
 
 # env_name:
 # [0] 'Door'
