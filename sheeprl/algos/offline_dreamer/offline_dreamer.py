@@ -10,18 +10,30 @@ import warnings
 from functools import partial
 from typing import Any, Callable, Dict, Sequence, Tuple, Union
 import pathlib
+from pathlib import Path
+import h5py
+import json
+import timeit
 
 import gymnasium as gym
 import hydra
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader, ConcatDataset, StackDataset
+from torchvision.transforms import v2
+# from torchvision import transforms
 from lightning.fabric import Fabric
 from lightning.fabric.wrappers import _FabricModule
 from torch import Tensor
 from torch.distributions import Distribution, Independent, OneHotCategorical
 from torch.optim import Optimizer
 from torchmetrics import SumMetric
+
+from libero.libero import get_libero_path
+from libero.libero.benchmark import get_benchmark
+from libero.lifelong.datasets import (GroupedTaskDataset, SequenceVLDataset, get_dataset)
+# from libero.lifelong.utils import (get_task_embs, safe_device, create_experiment_dir)
 
 from sheeprl.algos.offline_dreamer.agent import WorldModel, CBWM, build_agent
 from sheeprl.algos.offline_dreamer.loss import reconstruction_loss
@@ -466,18 +478,13 @@ def train(
             aggregator.update("Grads/critic", critic_grads.mean().detach())
 
     # Reset everything
-    actor_optimizer.zero_grad(set_to_none=True)
-    critic_optimizer.zero_grad(set_to_none=True)
     world_optimizer.zero_grad(set_to_none=True)
+    if compiled_behaviour_learning is not None:
+        actor_optimizer.zero_grad(set_to_none=True)
+        critic_optimizer.zero_grad(set_to_none=True)
 
 
 
-
-import h5py
-import torch
-from torch.utils.data import Dataset, DataLoader, ConcatDataset, StackDataset
-import numpy as np
-import json
 
 
 class LIBERODataset(Dataset):
@@ -533,14 +540,6 @@ def load_dataset(data_path, batch_size, num_workers=4):
     )
     return dataloader, dataset.env_args
 
-import timeit
-from pathlib import Path
-# from torchvision import transforms
-from torchvision.transforms import v2
-from libero.libero import get_libero_path
-from libero.libero.benchmark import get_benchmark
-from libero.lifelong.datasets import (GroupedTaskDataset, SequenceVLDataset, get_dataset)
-from libero.lifelong.utils import (get_task_embs, safe_device, create_experiment_dir)
 
 def get_datasets_from_benchmark(benchmark,libero_folder,seq_len=64,obs_modality=None):
     datasets = []
@@ -877,6 +876,9 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             step_data["targets"] = np.zeros((1, cfg.env.num_envs, cfg.algo.world_model.cbm_model.n_concepts))
         player.init_states()
 
+        top_ep_rew = []
+        last_ep_rew = 0
+
         cumulative_per_rank_gradient_steps = 0
         for iter_num in range(start_iter, total_iters + 1):
             policy_step += policy_steps_per_iter
@@ -1088,30 +1090,35 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             if (cfg.checkpoint.every > 0 and policy_step - last_checkpoint >= cfg.checkpoint.every) or (
                 iter_num == total_iters and cfg.checkpoint.save_last
             ):
-                last_checkpoint = policy_step
-                state = {
-                    "world_model": world_model.state_dict(),
-                    "actor": actor.state_dict(),
-                    "critic": critic.state_dict(),
-                    "target_critic": target_critic.state_dict(),
-                    "world_optimizer": world_optimizer.state_dict(),
-                    "actor_optimizer": actor_optimizer.state_dict(),
-                    "critic_optimizer": critic_optimizer.state_dict(),
-                    "moments": moments.state_dict(),
-                    "ratio": ratio.state_dict(),
-                    "iter_num": iter_num * fabric.world_size,
-                    "batch_size": cfg.algo.per_rank_batch_size * fabric.world_size,
-                    "last_log": last_log,
-                    "last_checkpoint": last_checkpoint,
-                }
-                ckpt_path = log_dir + f"/checkpoint/ckpt_{policy_step}_{fabric.global_rank}.ckpt"
-                fabric.call(
-                    "on_checkpoint_coupled",
-                    fabric=fabric,
-                    ckpt_path=ckpt_path,
-                    state=state,
-                    replay_buffer=rb if cfg.buffer.checkpoint else None,
-                )
+                if (len(top_ep_rew) < cfg.checkpoint.keep_last) or (last_ep_rew > min(top_ep_rew)):
+                    if len(top_ep_rew) >= cfg.checkpoint.keep_last:
+                        top_ep_rew.remove(min(top_ep_rew))
+                    top_ep_rew.append(last_ep_rew)
+
+                    last_checkpoint = policy_step
+                    state = {
+                        "world_model": world_model.state_dict(),
+                        "actor": actor.state_dict(),
+                        "critic": critic.state_dict(),
+                        "target_critic": target_critic.state_dict(),
+                        "world_optimizer": world_optimizer.state_dict(),
+                        "actor_optimizer": actor_optimizer.state_dict(),
+                        "critic_optimizer": critic_optimizer.state_dict(),
+                        "moments": moments.state_dict(),
+                        "ratio": ratio.state_dict(),
+                        "iter_num": iter_num * fabric.world_size,
+                        "batch_size": cfg.algo.per_rank_batch_size * fabric.world_size,
+                        "last_log": last_log,
+                        "last_checkpoint": last_checkpoint,
+                    }
+                    ckpt_path = log_dir + f"/checkpoint/ckpt_{policy_step}_{fabric.global_rank}.ckpt"
+                    fabric.call(
+                        "on_checkpoint_coupled",
+                        fabric=fabric,
+                        ckpt_path=ckpt_path,
+                        state=state,
+                        replay_buffer=rb if cfg.buffer.checkpoint else None,
+                    )
 
         envs.close()
     else:  ## OFFLINE LEARNING
