@@ -48,7 +48,19 @@ AGGREGATOR_KEYS = {
     "Rewards/lift_max_ep",
     "Rewards/hover_avg_ep",
     "Rewards/hover_max_ep",
-
+    "Val/world_model_loss",
+    "Val/observation_loss",
+    "Val/observation_error",
+    "Val/reward_loss",
+    "Val/state_loss",
+    "Val/continue_loss",
+    "Val/concept_loss",
+    "Val/per_concept_loss",
+    "Val/concept_precision",
+    "Val/concept_recall",
+    "Val/concept_f1_score",
+    "Val/concept_accuracy",
+    "Val/orthognality_loss",
 }
 MODELS_TO_REGISTER = {"world_model", "actor", "critic", "target_critic", "moments"}
 

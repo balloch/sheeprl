@@ -976,7 +976,7 @@ class CEM(nn.Module):
         pass
         non_concept_latent=None
         all_concept_latent=None
-        all_concepts=None
+        concept_probs=None
         all_logits=None
         for c in range(self.n_concepts+1):
             ### 1 generate context
@@ -985,7 +985,7 @@ class CEM(nn.Module):
                 ### 2 get prob given concept
                 if(probs==None):
                     logits =  self.concept_prob_generators[c](context)
-                    prob_gumbel = F.softmax(logits, dim=-1)  # TODO why are we using softmax here?
+                    prob_gumbel = F.softmax(logits, dim=-1)
                 else:
                     logits=probs[c]
                     prob_gumbel = F.softmax(logits, dim=-1)
@@ -1002,12 +1002,13 @@ class CEM(nn.Module):
                 else:
                     all_concept_latent= torch.cat((all_concept_latent,concept_latent),-1)
 
-                if all_concepts == None:
-                    all_concepts=prob_gumbel
+                if concept_probs == None:
+                    concept_probs=prob_gumbel
                     all_logits=logits
+                    # import pdb; pdb.set_trace()
                     expanded_logits = logits.unsqueeze(-2)
                 else:
-                    all_concepts=torch.cat((all_concepts,prob_gumbel),-1)  # List of probabilities
+                    concept_probs=torch.cat((concept_probs,prob_gumbel),-1)  # List of probabilities
                     all_logits=torch.cat((all_logits,logits),-1)
                     expanded_logits = torch.cat((expanded_logits,logits.unsqueeze(-2)),-2)
 
@@ -1017,8 +1018,9 @@ class CEM(nn.Module):
                 else:
                     non_concept_latent= torch.cat((non_concept_latent,context),-1)
 
-        latent = torch.cat((all_concepts,all_concept_latent,non_concept_latent),-1)
-        return latent, expanded_logits, all_concept_latent, non_concept_latent
+        # import pdb; pdb.set_trace()
+        latent = torch.cat((concept_probs,all_concept_latent,non_concept_latent),-1)
+        return latent, expanded_logits, concept_probs[...,::2], all_concept_latent, non_concept_latent
 
     def sample_latent(self, latent_shape) -> torch.Tensor:
         latent = torch.randn(latent_shape)

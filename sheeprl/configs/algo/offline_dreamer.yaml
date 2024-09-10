@@ -15,7 +15,9 @@ horizon: 15
 # Training recipe
 replay_ratio: 1
 offline: True
-offline_supervision: True
+offline_train_split: 0.8
+num_epochs: 100
+supervised_concepts: True
 learning_starts: 1024
 per_rank_pretrain_steps: 0
 per_rank_sequence_length: ???

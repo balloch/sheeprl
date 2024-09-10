@@ -20,15 +20,16 @@ import hydra
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader, ConcatDataset, StackDataset
+from torch.utils.data import Dataset, DataLoader, ConcatDataset, random_split
 from torchvision.transforms import v2
+from torchvision import tv_tensors
 # from torchvision import transforms
 from lightning.fabric import Fabric
 from lightning.fabric.wrappers import _FabricModule
 from torch import Tensor
 from torch.distributions import Distribution, Independent, OneHotCategorical
 from torch.optim import Optimizer
-from torchmetrics import SumMetric
+from torchmetrics import SumMetric, MeanMetric
 
 from libero.libero import get_libero_path
 from libero.libero.benchmark import get_benchmark
@@ -40,7 +41,7 @@ from sheeprl.algos.offline_dreamer.loss import reconstruction_loss
 from sheeprl.algos.offline_dreamer.utils import Moments, compute_lambda_values, prepare_obs, test
 from sheeprl.data.buffers import EnvIndependentReplayBuffer, SequentialReplayBuffer
 from sheeprl.envs.wrappers import RestartOnException
-from sheeprl.envs.robosuite import get_bddl_concepts
+from sheeprl.envs.robosuite import get_bddl_concepts, concept_dict
 from sheeprl.utils.distribution import (
     BernoulliSafeMode,
     MSEDistribution,
@@ -97,6 +98,7 @@ def dynamic_learning(
         posterior = torch.zeros(1, batch_size, stochastic_size, discrete_size, device=device)
         posteriors = torch.empty(sequence_length, batch_size, stochastic_size, discrete_size, device=device)
         posteriors_logits = torch.empty(sequence_length, batch_size, stoch_state_size, device=device)
+        # import pdb; pdb.set_trace()
         for i in range(0, sequence_length):
             recurrent_state, posterior, _, posterior_logits, prior_logits = world_model.rssm.dynamic(
                 posterior,
@@ -115,18 +117,19 @@ def dynamic_learning(
     if isinstance(world_model, CBWM):
         # print("DYNAMIC LEARNING!!!!!!!!!")
         random_latent = world_model.cem.sample_latent(list(latent_states.size()))
-        latent_states, pred_concepts, real_concept_latent, real_non_concept_latent = world_model.cem(latent_states)
-        _, _, rand_concept_latent, rand_non_concept_latent = world_model.cem(random_latent)
+        latent_states, concept_logits, concept_probs, real_concept_latent, real_non_concept_latent = world_model.cem(latent_states)
+        _, _, _, rand_concept_latent, rand_non_concept_latent = world_model.cem(random_latent)
         if data.get("targets") is not None:
             target_concepts = data["targets"]
         else:
             target_concepts = None
-        cem_data = [pred_concepts,
-                    target_concepts,
-                    real_concept_latent,  # This is the stuff we are comparing
-                    real_non_concept_latent,
-                    rand_concept_latent,
-                    rand_non_concept_latent]
+        cem_data = {"concept_logits":concept_logits,
+                    "target_concepts":target_concepts,
+                    "concept_probs":concept_probs,
+                    "real_concept_latent":real_concept_latent,  # This is the stuff we are comparing
+                    "real_non_concept_latent":real_non_concept_latent,
+                    "rand_concept_latent":rand_concept_latent,
+                    "rand_non_concept_latent":rand_non_concept_latent}
     return latent_states, priors_logits, posteriors_logits, posteriors, recurrent_states, cem_data
 
 
@@ -551,7 +554,6 @@ def get_datasets_from_benchmark(benchmark,libero_folder,seq_len=64,obs_modality=
     shape_meta = None
     # n_tasks = benchmark.n_tasks
     n_tasks = benchmark.n_tasks
-    seq_len = 64
     if obs_modality is None:
         obs_modality = {'rgb': ['agentview_rgb', 'eye_in_hand_rgb'], 'depth': [], 'low_dim': ['gripper_states', 'joint_states']}
     for i in range(n_tasks):
@@ -592,10 +594,10 @@ class TargetDataset(Dataset):
 
 
 class CombinedDictDataset(Dataset):
-    def __init__(self, sequence_dataset, target_dataset):
+    def __init__(self, sequence_dataset, targets_dataset):
         self.sequence_dataset = sequence_dataset
-        self.target_dataset = target_dataset
-        assert len(sequence_dataset) == len(target_dataset), "Datasets must have the same length"
+        self.target_dataset = targets_dataset
+        assert len(sequence_dataset) == len(targets_dataset), "Datasets must have the same length"
 
     def __len__(self):
         return len(self.sequence_dataset)
@@ -611,8 +613,35 @@ class CombinedDictDataset(Dataset):
         return combined_item
 
 
-# Usage example:
-# data_loader, env_args = load_dataset('path/to/your/libero_dataset.hdf5', batch_size=32)
+class TransformedDictDataset(Dataset):
+    def __init__(self, dataset, transform_dict=None, ratio=1):
+        super().__init__()
+        self.dataset = dataset
+        self.transform_dict = transform_dict
+        self.ratio = ratio
+
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        data_item = self.dataset[idx]
+        if self.transform_dict is not None:
+            for key, transform in self.transform_dict.items():
+                # Assuming the key is a subkey of the 'obs' dictionary
+                tv_video = tv_tensors.Video(data_item['obs'][key]) #T,C,H,W
+                data_item['obs'][key] = transform(tv_video)
+                del tv_video
+        # SheepRL/gymnasium specific
+        data_item['truncated'] = data_item['dones']
+        data_item['terminated'] = data_item['dones']
+        for obskey, obs_tmp in data_item['obs'].items():
+            data_item[obskey] = obs_tmp
+        del data_item['obs']
+        del data_item['dones']
+
+        return data_item
+
 
 class RestructureAndResizeTransform:
     def __init__(self, image_size, num_samples):
@@ -621,10 +650,10 @@ class RestructureAndResizeTransform:
         self.transform = v2.Resize((image_size, image_size))
         # transforms.Compose([
             # transforms.ToPILImage(),
-            # transforms.v2.Resize((image_size, image_size)),
+            # v2.Resize((image_size, image_size)),
             # transforms.ToTensor(),
         # ])
-        # self.resize = lambda data: transforms.v2.functional.resize(data['obs']['agentview_rgb'],size=(64,64))
+        # self.resize = lambda data: v2.functional.resize(data['obs']['agentview_rgb'],size=(64,64))
 
     def __call__(self, batch):
         # Restructure and resize observations
@@ -652,6 +681,231 @@ class RestructureAndResizeTransform:
 
         return processed_obs, actions, rewards, truncated, terminated, is_first
 
+
+
+
+def validate_wm(
+    fabric: Fabric,
+    world_model: Union[WorldModel, CBWM],
+    dataloader: torch.utils.data.DataLoader,
+    aggregator: MetricAggregator | None,
+    cfg: Dict[str, Any],
+    compiled_dynamic_learning: Callable,
+    save_obs: bool = False,
+    val_aggregator: MetricAggregator | None = None,
+) -> None:
+    """Runs one-step update of the agent.
+
+    Args:
+        fabric (Fabric): the fabric instance.
+        world_model (_FabricModule): the world model wrapped with Fabric.
+        data (Dict[str, Tensor]): the batch of data to use for training.
+        aggregator (MetricAggregator, optional): the aggregator to print the metrics.
+        cfg (DictConfig): the configs.
+        compiled_dynamic_learning (Callable): the compiled dynamic learning function.
+    """
+    # The environment interaction goes like this:
+    # Actions:           a0       a1       a2      a4
+    #                    ^ \      ^ \      ^ \     ^
+    #                   /   \    /   \    /   \   /
+    #                  /     v  /     v  /     v /
+    # Observations:  o0       o1       o2       o3
+    # Rewards:       0        r1       r2       r3
+    # Dones:         0        d1       d2       d3
+    # Is-first       1        i1       i2       i3
+
+    batch_size = cfg.algo.per_rank_batch_size
+    sequence_length = cfg.algo.per_rank_sequence_length
+    recurrent_state_size = cfg.algo.world_model.recurrent_model.recurrent_state_size
+    stochastic_size = cfg.algo.world_model.stochastic_size
+    discrete_size = cfg.algo.world_model.discrete_size
+    device = fabric.device
+    concept_metrics = {
+        'precision': [],
+        'recall': [],
+        'accuracy': [],
+        'f1_score': []
+    }
+    init_batch = next(iter(dataloader))
+
+    # import pdb; pdb.set_trace()
+    is_first_dummy_tensor = torch.cat((
+        torch.ones((1,init_batch['terminated'].shape[0])),
+        torch.zeros((init_batch['terminated'].shape[1]-1,init_batch['terminated'].shape[0]))
+    )).T.contiguous()  # hack. this only works when the sequence length is the same for all, 64 in the case of libero_90.
+    is_first_dummy_tensor = is_first_dummy_tensor.view(
+        2,
+        is_first_dummy_tensor.shape[0]//2,
+        *is_first_dummy_tensor.shape[1:]).permute(0,2,1,).unsqueeze(-1).to(device)
+
+
+    for val_idx, data in enumerate(dataloader):
+        # import pdb; pdb.set_trace()
+        for key, v in data.items():
+            if isinstance(v, torch.Tensor):
+                # import pdb; pdb.set_trace()
+                data[key] = v.to(device) # NOTE: moving image data to GPU takes about 0.03s, can it be faster?
+                # permute to match env
+                if len(data[key].shape) == 2: # rewards, truncated, terminated
+                    data[key] = data[key].permute(1,0).unsqueeze(-1)
+                elif len(data[key].shape) == 3: #actions,targets
+                    data[key] = data[key].permute(1,0,2)
+                elif len(data[key].shape) == 5:  # rgb: gradsteps, batch, seq, h, w, c
+                    data[key] = data[key].permute(1,0,*range(2,len(data[key].shape)))  #4,5,3)  # *range(3,len(v.shape)))
+                else:
+                    raise NotImplementedError(
+                        f"All shapes should be 3,4, or 6D, got {len(data[key].shape)} for {key}")
+            else:
+                raise NotImplementedError(
+                    f"All should be torch.Tensor, got {type(v)} for {key}")
+        data['is_first'] = is_first_dummy_tensor
+
+        batch_obs = {k: data[k] / 255.0 - 0.5 for k in cfg.algo.cnn_keys.encoder}
+        batch_obs.update({k: data[k] for k in cfg.algo.mlp_keys.encoder})
+        # data["is_first"][0, :] = torch.ones_like(data["is_first"][0, :])
+        data["is_first"] = torch.ones_like(data["terminated"])
+
+        # Given how the environment interaction works, we remove the last actions
+        # and add the first one as the zero action
+        batch_actions = torch.cat((torch.zeros_like(data["actions"][:1]), data["actions"][:-1]), dim=0)
+
+        # Dynamic Learning
+        stoch_state_size = stochastic_size * discrete_size
+
+        # Embed observations from the environment
+        embedded_obs = world_model.encoder(batch_obs)
+
+        # Dynamic Step
+        latent_states, priors_logits, posteriors_logits, posteriors, recurrent_states, cem_data = compiled_dynamic_learning(
+            world_model,
+            data,
+            batch_actions,
+            embedded_obs,
+            stochastic_size,
+            discrete_size,
+            recurrent_state_size,
+            batch_size,
+            sequence_length,
+            cfg.algo.world_model.decoupled_rssm,
+            device,
+        )
+
+        # Compute predictions for the observations
+        reconstructed_obs: Dict[str, torch.Tensor] = world_model.observation_model(latent_states)
+
+        observation_error = torch.dist(reconstructed_obs['agentview_rgb'], data['agentview_rgb'])
+
+        concept_probs = cem_data['concept_probs'] #[...,::2] # only take the positive concept probs
+        target_concepts = cem_data['target_concepts']
+
+        # Binarize predictions (multi-hot)
+        predicted = (concept_probs >= 0.5).float()
+
+        # True Positives (TP), False Positives (FP), False Negatives (FN)
+        TP = (predicted * target_concepts).sum(dim=(0, 1)).detach()  # Sum over batch and sequence dimension
+        FP = ((predicted == 1) & (target_concepts == 0)).sum(dim=(0, 1)).detach()
+        FN = ((predicted == 0) & (target_concepts == 1)).sum(dim=(0, 1)).detach()
+        TN = ((predicted == 0) & (target_concepts == 0)).sum(dim=(0, 1)).detach()
+
+        eps=1e-10
+        concept_precision = TP / (TP + FP + eps)
+        concept_recall = TP / (TP + FN + eps)
+        concept_accuracy = (TP + TN) / (TP + TN + FP + FN + eps)
+        concept_f1_score = 2 * (concept_precision * concept_recall) / (concept_precision + concept_recall + eps)
+
+        # Class-wise metrics (for each class separately)
+        concept_metrics['precision'].append(concept_precision.cpu().numpy())
+        concept_metrics['recall'].append(concept_recall.cpu().numpy())
+        concept_metrics['accuracy'].append(concept_accuracy.cpu().numpy())
+        concept_metrics['f1_score'].append(concept_f1_score.cpu().numpy())
+
+        ## If accumulating the metrics is too much data:
+        # def online_mean(new_array, current_mean, count):
+        #     # Update the mean incrementally using the online formula
+        #     updated_mean = current_mean + (new_array - current_mean) / (count + 1)
+        #     return updated_mean
+
+        # Averaged metrics (over all classes)
+        concept_mean_metrics = {
+            'precision': concept_precision.mean(),
+            'recall': concept_recall.mean(),
+            'accuracy': concept_accuracy.mean(),
+            'f1_score': concept_f1_score.mean()
+        }
+
+        # Compute the distribution over the reconstructed observations
+        po = {
+            k: MSEDistribution(reconstructed_obs[k], dims=len(reconstructed_obs[k].shape[2:]))
+            for k in cfg.algo.cnn_keys.decoder
+        }
+        po.update(
+            {
+                k: SymlogDistribution(reconstructed_obs[k], dims=len(reconstructed_obs[k].shape[2:]))
+                for k in cfg.algo.mlp_keys.decoder
+            }
+        )
+
+        # Compute the distribution over the rewards
+        pr = TwoHotEncodingDistribution(world_model.reward_model(latent_states), dims=1)
+
+        # Compute the distribution over the terminal steps, if required
+        pc = Independent(BernoulliSafeMode(logits=world_model.continue_model(latent_states)), 1)
+        continues_targets = 1 - data["terminated"]
+
+        # Reshape posterior and prior logits to shape [B, T, 32, 32]
+        priors_logits = priors_logits.view(*priors_logits.shape[:-1], stochastic_size, discrete_size)
+        posteriors_logits = posteriors_logits.view(*posteriors_logits.shape[:-1], stochastic_size, discrete_size)
+
+        # World model optimization step. Eq. 4 in the paper
+        rec_loss, loss_dict = reconstruction_loss(
+            po,
+            batch_obs,
+            pr,
+            data["rewards"],
+            priors_logits,
+            posteriors_logits,
+            world_model,
+            cem_data,
+            cfg.algo.world_model.cbm_model.use_cbm,
+            cfg.algo.world_model.kl_dynamic,
+            cfg.algo.world_model.kl_representation,
+            cfg.algo.world_model.kl_free_nats,
+            cfg.algo.world_model.kl_regularizer,
+            pc,
+            continues_targets,
+            cfg.algo.world_model.continue_scale_factor,
+            cfg.algo.world_model.cbm_model.ortho_reg,
+            cfg.algo.world_model.cbm_model.concept_reg
+        )
+
+        kl = loss_dict['kl']
+        state_loss = loss_dict['kl_loss']
+        reward_loss = loss_dict['reward_loss']
+        observation_loss = loss_dict['observation_loss']
+        continue_loss = loss_dict['continue_loss']
+
+        # Aggregate metrics
+        if aggregator and not aggregator.disabled:
+            aggregator.update("Val/world_model_loss", rec_loss.detach())
+            aggregator.update("Val/observation_loss", observation_loss.detach())
+            aggregator.update("Val/observation_error", observation_error.detach())
+            aggregator.update("Val/reward_loss", reward_loss.detach())
+            aggregator.update("Val/state_loss", state_loss.detach())
+            aggregator.update("Val/continue_loss", continue_loss.detach())
+            aggregator.update("Val/concept_loss", loss_dict['concept_loss'].detach())
+            aggregator.update("Val/orthognality_loss", loss_dict['concept_loss'].detach())
+            aggregator.update("Val/per_concept_loss", loss_dict['loss_per_concept'].detach())
+            aggregator.update("Val/concept_precision", concept_mean_metrics['precision'].detach())
+            aggregator.update("Val/concept_recall", concept_mean_metrics['recall'].detach())
+            aggregator.update("Val/concept_f1_score", concept_mean_metrics['f1_score'].detach())
+            aggregator.update("Val/concept_accuracy", concept_mean_metrics['accuracy'].detach())
+        if val_idx % 10 == 0 and val_idx > 0:
+            print(f"Val/{val_idx}: {concept_mean_metrics}")
+            if val_idx > 100:
+                break
+    for key, concept_val in concept_metrics.items():
+        # concept_metrics[key] = concept_metrics[key].detach().numpy()
+        print(f"Val/{key}: {np.stack(concept_val, axis=0).mean(axis=0)}")
 
 @register_algorithm()
 def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = None) -> None:
@@ -1187,20 +1441,13 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
         # benchmark.set_task_embs(task_embs)
         n_demos = [data.n_demos for data in datasets]
         n_sequences = [data.total_num_sequences for data in datasets]
-        # dataloader = DataLoader(
-        #     dataset,
-        #     batch_size=batch_size,
-        #     shuffle=True,
-        #     num_workers=num_workers,
-        #     pin_memory=True
-        # )
 
         # Create Ratio class
         ratio = Ratio(cfg.algo.replay_ratio, pretrain_steps=cfg.algo.per_rank_pretrain_steps)
         if cfg.checkpoint.resume_from:
             ratio.load_state_dict(state["ratio"])
 
-        if cfg.algo.offline_supervision:
+        if cfg.algo.supervised_concepts:
             temp_datas = []
             for dataset, task_concept in zip(datasets, task_concepts):
                 temp_datas.append(CombinedDictDataset(dataset, task_concept))
@@ -1237,19 +1484,55 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
         ## NOTE: all Libero90 datapoints are concatonated sequences of 64 frames.
 
 
-        # transform = RestructureAndResizeTransform(
-        #     cfg.env.screen_size,
-        #     num_samples=2)
 
-
-        dataloader = DataLoader(
-            concat_dataset,
+        # Split into train and validation
+        generator1 = torch.Generator().manual_seed(42)
+        train_split, val_split = torch.utils.data.random_split(
+            dataset=concat_dataset,
+            lengths=[cfg.algo.offline_train_split, 1-cfg.algo.offline_train_split],
+            generator=generator1
+            )
+        train_transforms_dict = {
+            'agentview_rgb': v2.Compose([
+                # v2.ToTensor(),
+                # v2.ToDtype(torch.float32, scale=True),
+                v2.Resize((cfg.env.screen_size, cfg.env.screen_size)),
+                v2.Pad(4,padding_mode=cfg.train_transforms.Pad.pad_type),
+                v2.RandomCrop(cfg.env.screen_size),
+                # v2.ToTensor(),
+            ]) }
+        train_dataset = TransformedDictDataset(
+            dataset=train_split,
+            transform_dict=train_transforms_dict,
+            ratio=int(1.0/cfg.algo.replay_ratio)
+            )
+        train_dataloader = DataLoader(
+            train_dataset,
             batch_size=cfg.algo.per_rank_batch_size * 2, # replay_ratio=0.5 This is hacky, but Ratio is confusing
             shuffle=True,
             num_workers=4,
             pin_memory=True,
             drop_last=True,
-            # collate_fn=transform,
+            )
+        val_transforms_dict = {
+            'agentview_rgb': v2.Compose([
+                # v2.ToImage(),
+                v2.Resize((cfg.env.screen_size, cfg.env.screen_size)),
+                # v2.Pad(4,padding_mode=cfg.val_transforms.Pad.pad_type),
+                # v2.RandomCrop(cfg.env.screen_size),
+                # v2.ToTensor(),
+            ])}
+        val_dataset = TransformedDictDataset(
+            dataset=val_split,
+            transform_dict=val_transforms_dict
+            )
+        val_dataloader = DataLoader(
+            val_dataset,
+            batch_size=cfg.algo.per_rank_batch_size, # replay_ratio=0.5 This is hacky, but Ratio is confusing
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=True,
             )
 
 
@@ -1343,6 +1626,14 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
         if not MetricAggregator.disabled:
             aggregator: MetricAggregator = hydra.utils.instantiate(cfg.metric.aggregator, _convert_="all").to(device)
 
+        # if not MetricAggregator.disabled:
+        #     val_aggregator = MetricAggregator()
+        #     for concept_key in concept_dict.keys():
+        #         val_aggregator.add(f"Val/{concept_key}_prec", MeanMetric())
+        #         val_aggregator.add(f"Val/{concept_key}_recall", MeanMetric())
+        #         val_aggregator.add(f"Val/{concept_key}_f1", MeanMetric())
+        #         val_aggregator.add(f"Val/{concept_key}_acc", MeanMetric())
+
         # Local data
         buffer_size = cfg.buffer.size // int(cfg.env.num_envs * fabric.world_size) if not cfg.dry_run else 2
         rb = EnvIndependentReplayBuffer(
@@ -1413,13 +1704,13 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
 
         cumulative_per_rank_gradient_steps = 0
         iter_num = start_iter
-        num_epochs = 100
 
-        init_batch = next(iter(dataloader))
+        init_batch = next(iter(train_dataloader))
 
+        # import pdb; pdb.set_trace()
         is_first_dummy_tensor = torch.cat((
-            torch.ones((1,init_batch['dones'].shape[0])),
-            torch.zeros((init_batch['dones'].shape[1]-1,init_batch['dones'].shape[0]))
+            torch.ones((1,init_batch['terminated'].shape[0])),
+            torch.zeros((init_batch['terminated'].shape[1]-1,init_batch['terminated'].shape[0]))
         )).T.contiguous()  # hack. this only works when the sequence length is the same for all, 64 in the case of libero_90.
         is_first_dummy_tensor = is_first_dummy_tensor.view(
             2,
@@ -1432,41 +1723,34 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
 
         cfg.buffer.checkpoint = False  #only when offline learning TODO probably should be an assert
 
-        learning_starts = 64
-        for epoch in range(num_epochs):
+        for epoch in range(cfg.algo.num_epochs):
             print(f"Epoch {epoch}")
-            for batch in dataloader:
+            for batch in train_dataloader:
                 print(f"iter_num={iter_num}")
-                ## Transform data to make it match env. TODO This feels like I should be able to do it in the dataloader:
-                batch['truncated'] = batch['dones']
-                batch['terminated'] = batch['dones']
-                for obskey, obs_tmp in batch['obs'].items():
-                    if 'rgb' in obskey and obs_tmp.shape[-2] != cfg.env.screen_size:
-                        # obs_tmp = F.interpolate(obs_tmp, (obs_tmp.shape[-3],cfg.env.screen_size,cfg.env.screen_size),mode='nearest-exact') # NOTE: this is slightly better 0.1s
-                        obs_tmp = v2.functional.resize(obs_tmp, (cfg.env.screen_size,cfg.env.screen_size)) # NOTE: this is slow, 0.3s
-                    batch[obskey] = obs_tmp
 
+                ## Expand based on training ratio. TODO This feels like I should be able to do it in the dataloader collate_fn:
                 for key, v in batch.items():
                     # expand batch to "2 samplings"
                     if isinstance(v, torch.Tensor):
                         batch[key] = v.view(
-                            2,
-                            v.shape[0]//2,
+                            int(1.0/cfg.algo.replay_ratio),
+                            v.shape[0]//(int(1.0/cfg.algo.replay_ratio)),
                             *v.shape[1:]).to(device) # NOTE: moving image data to GPU takes about 0.03s, can it be faster?
                         # permute to match env
-                        if len(batch[key].shape) == 3:
+                        if len(batch[key].shape) == 3: # rewards, truncated, terminated
                             batch[key] = batch[key].permute(0,2,1,).unsqueeze(-1)
-                        elif len(batch[key].shape) == 4:
+                        elif len(batch[key].shape) == 4: #actions,targets
                             batch[key] = batch[key].permute(0,2,1,3)
-                        elif len(batch[key].shape) == 6:  # rgb
+                        elif len(batch[key].shape) == 6:  # rgb: gradsteps, batch, seq, h, w, c
                             batch[key] = batch[key].permute(0,2,1,*range(3,len(batch[key].shape)))  #4,5,3)  # *range(3,len(v.shape)))
                         else:
                             raise NotImplementedError(
                                 f"All shapes should be 3,4, or 6D, got {len(batch[key].shape)} for {key}")
+                    else:
+                        raise NotImplementedError(
+                            f"All should be torch.Tensor, got {type(v)} for {key}")
                 batch['is_first'] = is_first_dummy_tensor
                 # batch['agentview_rgb'] = batch['obs']['agentview_rgb'].permute(1,0,3,4,2)
-                del batch['obs']
-                del batch['dones']
 
                 policy_step += policy_steps_per_iter
 
@@ -1483,10 +1767,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                     # )
                     with timer("Time/train_time", SumMetric, sync_on_compute=cfg.metric.sync_on_compute):
                         for i in range(per_rank_gradient_steps):
-                            if (
-                                cumulative_per_rank_gradient_steps % cfg.algo.critic.per_rank_target_network_update_freq
-                                == 0
-                            ):
+                            if (cumulative_per_rank_gradient_steps % cfg.algo.critic.per_rank_target_network_update_freq == 0):
                                 tau = 1 if cumulative_per_rank_gradient_steps == 0 else cfg.algo.critic.tau
                                 for cp, tcp in zip(critic.module.parameters(), target_critic.parameters()):
                                     tcp.data.copy_(tau * cp.data + (1 - tau) * tcp.data)
@@ -1519,6 +1800,20 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                 ## Log metrics Phase
                 if cfg.metric.log_level > 0 and (policy_step - last_log >= cfg.metric.log_every or iter_num == total_iters):
                     print(f"policy_step={policy_step}, last_log={last_log}")
+
+                    # Validate on validation set
+                    with torch.inference_mode() and timer("Time/train_time", SumMetric, sync_on_compute=cfg.metric.sync_on_compute):
+                        validate_wm(
+                            fabric=fabric,
+                            world_model=world_model,
+                            dataloader=val_dataloader,
+                            aggregator=aggregator,
+                            cfg=cfg,
+                            compiled_dynamic_learning=compiled_dynamic_learning,
+                            save_obs=True,
+                            # val_aggregator=val_aggregator,
+                            )
+
                     # Sync distributed metrics
                     if aggregator and not aggregator.disabled:
                         metrics_dict = aggregator.compute()
