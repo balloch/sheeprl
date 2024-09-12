@@ -31,6 +31,7 @@ buffer:
 
 # Algorithm
 algo:
+  per_rank_batch_size: 8
   offline: False
   total_steps: 10_000_000
   cnn_keys:
@@ -40,7 +41,7 @@ algo:
       - agentview_rgb
   mlp_keys:
     encoder: []
-  learning_starts: 10_000
+  learning_starts: 2_000
   replay_ratio: 0.5
 
 # Metric

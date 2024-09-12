@@ -52,13 +52,13 @@ hafner_initialization: True
 
 # Compile related parameters
 compile_dynamic_learning:
-  disable: False
+  disable: True
   fullgraph: False
 compile_behaviour_learning:
-  disable: False
+  disable: True
   fullgraph: False
 compile_compute_lambda_values:
-  disable: False
+  disable: True
   fullgraph: False
 
 # World model
@@ -181,7 +181,7 @@ actor:
   unimix: ${algo.unimix}
   action_clip: 1.0
   compile:
-    disable: False
+    disable: True
     fullgraph: True
 
   # Disttributed percentile model (used to scale the values)
@@ -209,7 +209,7 @@ critic:
   bins: 255
   clip_gradients: 100.0
   compile:
-    disable: False
+    disable: True
     fullgraph: True
 
   # Critic optimizer
