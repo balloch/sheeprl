@@ -11,7 +11,10 @@ seed: 5
 
 # # Environment
 env:
+  num_envs: 4
   max_episode_steps: 1000
+  wrapper:
+    bddl_file: scenes/LIBERO_OBJECT_SCENE_pick_up_the_butter_and_place_it_in_the_basket.bddl
 
 #   action_repeat: 2
 #   max_episode_steps: -1
