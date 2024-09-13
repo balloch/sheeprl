@@ -53,7 +53,6 @@ class RobosuiteWrapper(gym.Wrapper):
             use_camera_obs: (bool) = False,
             control_freq: (int) = 20,
         """
-
         self.env_name = env_name
         self.env_config = env_config
         self.robot = robot
@@ -98,8 +97,10 @@ class RobosuiteWrapper(gym.Wrapper):
                 bddl_file_name=bddl_file,
                 **libero_args,
             )
+            # import pdb; pdb.set_trace()
             self.concepts = np.array(get_bddl_concepts(self.bddl_file))
         else:
+            # import pdb; pdb.set_trace()
             env = suite.make(**libero_args,
                              **extra_robosuite_make_args)
 
@@ -191,12 +192,12 @@ class RobosuiteWrapper(gym.Wrapper):
         self.seed = 10  #TODO this should come from the config
 
         self.step_returns = {
-            'extrinsic': -1*np.ones(self.horizon*20),
+            'extrinsic': -1*np.ones(self.horizon), #*20
             'intrinsic': {
-                'reach': -1*np.ones(self.horizon*20),
-                'grasp': -1*np.ones(self.horizon*20),
-                'lift': -1*np.ones(self.horizon*20),
-                'hover': -1*np.ones(self.horizon*20)
+                'reach': -1*np.ones(self.horizon),
+                'grasp': -1*np.ones(self.horizon),
+                'lift': -1*np.ones(self.horizon),
+                'hover': -1*np.ones(self.horizon)
             }
         }
         self.ep_stats = {
@@ -316,9 +317,9 @@ class RobosuiteWrapper(gym.Wrapper):
         infos = time_step[3]
         infos["discount"] = .997  # TODO: I don't know if thats correct
         infos["internal_state"] = time_step[0]
-        
-        
-        infos["concepts"] = self.concepts
+
+        if self.bddl_file:
+            infos["concepts"] = self.concepts
 
         if self.reward_shaping and self.bddl_file:
             r_reach, r_grasp, r_lift, r_hover = self.staged_rewards()
@@ -349,14 +350,16 @@ class RobosuiteWrapper(gym.Wrapper):
         # self.ep_returns = []  # np.zeros(self.num_envs, dtype=np.float32)
 
         # Accumulate stats
+        # import pdb; pdb.set_trace()
         if (self.step_returns['extrinsic'] > -1).any():
             self.ep_stats['extrinsic'].append(
                 self.step_returns['extrinsic'][self.step_returns['extrinsic'] > -1].mean())
             for key in self.ep_stats['intrinsic'].keys():
-                self.ep_stats['intrinsic'][key]['mean'].append(
-                    self.step_returns['intrinsic'][key][self.step_returns['intrinsic'][key] > -1].mean())
-                self.ep_stats['intrinsic'][key]['max'].append(
-                    self.step_returns['intrinsic'][key][self.step_returns['intrinsic'][key] > -1].max())
+                if (self.step_returns['intrinsic'][key] > -1).any():
+                    self.ep_stats['intrinsic'][key]['mean'].append(
+                        self.step_returns['intrinsic'][key][self.step_returns['intrinsic'][key] > -1].mean())
+                    self.ep_stats['intrinsic'][key]['max'].append(
+                        self.step_returns['intrinsic'][key][self.step_returns['intrinsic'][key] > -1].max())
 
             self.ep_stats['length'].append(self.ep_length)
 

@@ -158,8 +158,8 @@ world_model:
     emb_size: 16
     concept_type: ["bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin","bin"]
     concept_bins: [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2]
-    ortho_reg: 1e-2
-    concept_reg: 1e-2
+    ortho_reg: 1.0 #e-2
+    concept_reg: 1.0 #e-2
 
 
   # World model optimizer

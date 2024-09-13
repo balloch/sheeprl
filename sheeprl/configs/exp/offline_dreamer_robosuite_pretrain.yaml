@@ -43,8 +43,9 @@ buffer:
 
 # Algorithm
 algo:
+  per_rank_batch_size: 32
   offline: True
-  total_steps: 10_000_000
+  total_steps: 500_000
   cnn_keys:
     encoder:
       - agentview_rgb

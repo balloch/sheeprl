@@ -30,6 +30,7 @@ from torch import Tensor
 from torch.distributions import Distribution, Independent, OneHotCategorical
 from torch.optim import Optimizer
 from torchmetrics import SumMetric, MeanMetric
+import wandb
 
 from libero.libero import get_libero_path
 from libero.libero.benchmark import get_benchmark
@@ -251,7 +252,10 @@ def train(
     stochastic_size = cfg.algo.world_model.stochastic_size
     discrete_size = cfg.algo.world_model.discrete_size
     device = fabric.device
-    batch_obs = {k: data[k] / 255.0 - 0.5 for k in cfg.algo.cnn_keys.encoder}
+    if cfg.algo.offline is False:
+        batch_obs = {k: data[k] / 255.0 - 0.5 for k in cfg.algo.cnn_keys.encoder}
+    else:
+        batch_obs = {k: data[k] - 0.5 for k in cfg.algo.cnn_keys.encoder}
     batch_obs.update({k: data[k] for k in cfg.algo.mlp_keys.encoder})
     data["is_first"][0, :] = torch.ones_like(data["is_first"][0, :])
 
@@ -285,7 +289,7 @@ def train(
 
     # Compute predictions for the observations
     reconstructed_obs: Dict[str, torch.Tensor] = world_model.observation_model(latent_states)
-
+    # import pdb; pdb.set_trace()
     # Compute the distribution over the reconstructed observations
     po = {
         k: MSEDistribution(reconstructed_obs[k], dims=len(reconstructed_obs[k].shape[2:]))
@@ -683,7 +687,7 @@ class RestructureAndResizeTransform:
 
 
 
-
+@torch.inference_mode()
 def validate_wm(
     fabric: Fabric,
     world_model: Union[WorldModel, CBWM],
@@ -726,6 +730,7 @@ def validate_wm(
         'accuracy': [],
         'f1_score': []
     }
+    qualitative_log = False
     init_batch = next(iter(dataloader))
 
     # import pdb; pdb.set_trace()
@@ -760,7 +765,9 @@ def validate_wm(
                     f"All should be torch.Tensor, got {type(v)} for {key}")
         data['is_first'] = is_first_dummy_tensor
 
-        batch_obs = {k: data[k] / 255.0 - 0.5 for k in cfg.algo.cnn_keys.encoder}
+        # import pdb; pdb.set_trace()
+        batch_obs = {k: data[k] - 0.5 for k in cfg.algo.cnn_keys.encoder}
+        # import pdb; pdb.set_trace()
         batch_obs.update({k: data[k] for k in cfg.algo.mlp_keys.encoder})
         # data["is_first"][0, :] = torch.ones_like(data["is_first"][0, :])
         data["is_first"] = torch.ones_like(data["terminated"])
@@ -777,22 +784,33 @@ def validate_wm(
 
         # Dynamic Step
         latent_states, priors_logits, posteriors_logits, posteriors, recurrent_states, cem_data = compiled_dynamic_learning(
-            world_model,
-            data,
-            batch_actions,
-            embedded_obs,
-            stochastic_size,
-            discrete_size,
-            recurrent_state_size,
-            batch_size,
-            sequence_length,
-            cfg.algo.world_model.decoupled_rssm,
-            device,
+            world_model=world_model,
+            data=data,
+            batch_actions=batch_actions,
+            embedded_obs=embedded_obs,
+            stochastic_size=stochastic_size,
+            discrete_size=discrete_size,
+            recurrent_state_size=recurrent_state_size,
+            batch_size=batch_size,
+            sequence_length=sequence_length,
+            decoupled_rssm=cfg.algo.world_model.decoupled_rssm,
+            device=device,
         )
 
         # Compute predictions for the observations
         reconstructed_obs: Dict[str, torch.Tensor] = world_model.observation_model(latent_states)
-
+        # if "wandb" in cfg.metric.logger._target_.lower() and qualitative_log is False:
+        #     # import pdb; pdb.set_trace()
+        #     wandb.log({"data_video": wandb.Video(
+        #         np.transpose((data['agentview_rgb'][:,0,...].cpu().numpy()* 255).astype(np.uint8),(0, 2, 3, 1)),
+        #         fps=10),
+        #         # np.transpose(video, (0, 2, 3, 1))
+        #         # fps=10
+        #         # imageio.mimsave(output_path, video, fps=fps)
+        #         #    "predicted_video": wandb.Video(reconstructed_obs['agentview_rgb'][:,0,...].cpu().detach().numpy(), duration=5)
+        #         })
+        #     # import pdb; pdb.set_trace()
+        #     qualitative_log = True
         observation_error = torch.dist(reconstructed_obs['agentview_rgb'], data['agentview_rgb'])
 
         concept_probs = cem_data['concept_probs'] #[...,::2] # only take the positive concept probs
@@ -814,12 +832,12 @@ def validate_wm(
         concept_f1_score = 2 * (concept_precision * concept_recall) / (concept_precision + concept_recall + eps)
 
         # Class-wise metrics (for each class separately)
-        concept_metrics['precision'].append(concept_precision.cpu().numpy())
-        concept_metrics['recall'].append(concept_recall.cpu().numpy())
-        concept_metrics['accuracy'].append(concept_accuracy.cpu().numpy())
-        concept_metrics['f1_score'].append(concept_f1_score.cpu().numpy())
+        # concept_metrics['precision'].append(concept_precision.cpu().numpy())
+        # concept_metrics['recall'].append(concept_recall.cpu().numpy())
+        # concept_metrics['accuracy'].append(concept_accuracy.cpu().numpy())
+        # concept_metrics['f1_score'].append(concept_f1_score.cpu().numpy())
 
-        ## If accumulating the metrics is too much data:
+        ## If accumulating the metrics is too much data:  # TODO update: i think it is, program keeps hanging
         # def online_mean(new_array, current_mean, count):
         #     # Update the mean incrementally using the online formula
         #     updated_mean = current_mean + (new_array - current_mean) / (count + 1)
@@ -833,79 +851,85 @@ def validate_wm(
             'f1_score': concept_f1_score.mean()
         }
 
-        # Compute the distribution over the reconstructed observations
-        po = {
-            k: MSEDistribution(reconstructed_obs[k], dims=len(reconstructed_obs[k].shape[2:]))
-            for k in cfg.algo.cnn_keys.decoder
-        }
-        po.update(
-            {
-                k: SymlogDistribution(reconstructed_obs[k], dims=len(reconstructed_obs[k].shape[2:]))
-                for k in cfg.algo.mlp_keys.decoder
-            }
-        )
+        # # Compute the distribution over the reconstructed observations
+        # po = {
+        #     k: MSEDistribution(reconstructed_obs[k], dims=len(reconstructed_obs[k].shape[2:]))
+        #     for k in cfg.algo.cnn_keys.decoder
+        # }
+        # po.update(
+        #     {
+        #         k: SymlogDistribution(reconstructed_obs[k], dims=len(reconstructed_obs[k].shape[2:]))
+        #         for k in cfg.algo.mlp_keys.decoder
+        #     }
+        # )
 
-        # Compute the distribution over the rewards
-        pr = TwoHotEncodingDistribution(world_model.reward_model(latent_states), dims=1)
+        # # Compute the distribution over the rewards
+        # pr = TwoHotEncodingDistribution(world_model.reward_model(latent_states), dims=1)
 
-        # Compute the distribution over the terminal steps, if required
-        pc = Independent(BernoulliSafeMode(logits=world_model.continue_model(latent_states)), 1)
-        continues_targets = 1 - data["terminated"]
+        # # Compute the distribution over the terminal steps, if required
+        # pc = Independent(BernoulliSafeMode(logits=world_model.continue_model(latent_states)), 1)
+        # continues_targets = 1 - data["terminated"]
 
-        # Reshape posterior and prior logits to shape [B, T, 32, 32]
-        priors_logits = priors_logits.view(*priors_logits.shape[:-1], stochastic_size, discrete_size)
-        posteriors_logits = posteriors_logits.view(*posteriors_logits.shape[:-1], stochastic_size, discrete_size)
+        # # Reshape posterior and prior logits to shape [B, T, 32, 32]
+        # priors_logits = priors_logits.view(*priors_logits.shape[:-1], stochastic_size, discrete_size)
+        # posteriors_logits = posteriors_logits.view(*posteriors_logits.shape[:-1], stochastic_size, discrete_size)
 
-        # World model optimization step. Eq. 4 in the paper
-        rec_loss, loss_dict = reconstruction_loss(
-            po,
-            batch_obs,
-            pr,
-            data["rewards"],
-            priors_logits,
-            posteriors_logits,
-            world_model,
-            cem_data,
-            cfg.algo.world_model.cbm_model.use_cbm,
-            cfg.algo.world_model.kl_dynamic,
-            cfg.algo.world_model.kl_representation,
-            cfg.algo.world_model.kl_free_nats,
-            cfg.algo.world_model.kl_regularizer,
-            pc,
-            continues_targets,
-            cfg.algo.world_model.continue_scale_factor,
-            cfg.algo.world_model.cbm_model.ortho_reg,
-            cfg.algo.world_model.cbm_model.concept_reg
-        )
+        # # World model optimization step. Eq. 4 in the paper
+        # rec_loss, loss_dict = reconstruction_loss(
+        #     po,
+        #     batch_obs,
+        #     pr,
+        #     data["rewards"],
+        #     priors_logits,
+        #     posteriors_logits,
+        #     world_model,
+        #     cem_data,
+        #     cfg.algo.world_model.cbm_model.use_cbm,
+        #     cfg.algo.world_model.kl_dynamic,
+        #     cfg.algo.world_model.kl_representation,
+        #     cfg.algo.world_model.kl_free_nats,
+        #     cfg.algo.world_model.kl_regularizer,
+        #     pc,
+        #     continues_targets,
+        #     cfg.algo.world_model.continue_scale_factor,
+        #     cfg.algo.world_model.cbm_model.ortho_reg,
+        #     cfg.algo.world_model.cbm_model.concept_reg
+        # )
 
-        kl = loss_dict['kl']
-        state_loss = loss_dict['kl_loss']
-        reward_loss = loss_dict['reward_loss']
-        observation_loss = loss_dict['observation_loss']
-        continue_loss = loss_dict['continue_loss']
+        # # kl = loss_dict['kl']
+        # state_loss = loss_dict['kl_loss']
+        # reward_loss = loss_dict['reward_loss']
+        # observation_loss = loss_dict['observation_loss']
+        # continue_loss = loss_dict['continue_loss']
+
 
         # Aggregate metrics
         if aggregator and not aggregator.disabled:
-            aggregator.update("Val/world_model_loss", rec_loss.detach())
-            aggregator.update("Val/observation_loss", observation_loss.detach())
-            aggregator.update("Val/observation_error", observation_error.detach())
-            aggregator.update("Val/reward_loss", reward_loss.detach())
-            aggregator.update("Val/state_loss", state_loss.detach())
-            aggregator.update("Val/continue_loss", continue_loss.detach())
-            aggregator.update("Val/concept_loss", loss_dict['concept_loss'].detach())
-            aggregator.update("Val/orthognality_loss", loss_dict['concept_loss'].detach())
-            aggregator.update("Val/per_concept_loss", loss_dict['loss_per_concept'].detach())
-            aggregator.update("Val/concept_precision", concept_mean_metrics['precision'].detach())
-            aggregator.update("Val/concept_recall", concept_mean_metrics['recall'].detach())
-            aggregator.update("Val/concept_f1_score", concept_mean_metrics['f1_score'].detach())
-            aggregator.update("Val/concept_accuracy", concept_mean_metrics['accuracy'].detach())
-        if val_idx % 10 == 0 and val_idx > 0:
+            aggregator.update("Val/concept_precision", concept_mean_metrics['precision'])
+            aggregator.update("Val/concept_recall", concept_mean_metrics['recall'])
+            aggregator.update("Val/concept_f1_score", concept_mean_metrics['f1_score'])
+            aggregator.update("Val/concept_accuracy", concept_mean_metrics['accuracy'])
+            aggregator.update("Val/observation_error", observation_error)
+            # aggregator.update("Val/world_model_loss", rec_loss.detach())
+            # aggregator.update("Val/observation_loss", observation_loss.detach())
+            # aggregator.update("Val/reward_loss", reward_loss.detach())
+            # aggregator.update("Val/state_loss", state_loss.detach())
+            # aggregator.update("Val/continue_loss", continue_loss.detach())
+            # aggregator.update("Val/concept_loss", loss_dict['concept_loss'].detach())
+            # aggregator.update("Val/orthognality_loss", loss_dict['concept_loss'].detach())
+            # aggregator.update("Val/per_concept_loss", loss_dict['loss_per_concept'].detach())
+        if val_idx > 100:
+            print('hit0')
+            # TODO why is there a long delay between hit0 and hit1?
+            break
+        if val_idx % 25 == 0 and val_idx > 0:
             print(f"Val/{val_idx}: {concept_mean_metrics}")
-            if val_idx > 100:
-                break
-    for key, concept_val in concept_metrics.items():
-        # concept_metrics[key] = concept_metrics[key].detach().numpy()
-        print(f"Val/{key}: {np.stack(concept_val, axis=0).mean(axis=0)}")
+    print('hit1')
+    # for key, concept_val in concept_metrics.items():
+    #     # concept_metrics[key] = concept_metrics[key].detach().numpy()
+    #     print(f"Val/{key}: {np.stack(concept_val, axis=0).mean(axis=0)}")
+    print('hit2')
+
 
 @register_algorithm()
 def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = None) -> None:
@@ -1161,6 +1185,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                                 axis=-1,
                             )
                     else:
+                        import pdb; pdb.set_trace()
                         torch_obs = prepare_obs(fabric, obs, cnn_keys=cfg.algo.cnn_keys.encoder, num_envs=cfg.env.num_envs)
                         mask = {k: v for k, v in torch_obs.items() if k.startswith("mask")}
                         if len(mask) == 0:
@@ -1469,8 +1494,8 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                 if 'image' in k or 'rgb' in k:
                     obs_space_dict[k] = gym.spaces.Box(
                         low=0,
-                        high=255,
-                        shape=v[0].shape,
+                        high=1.0,
+                        shape=(3, cfg.env.screen_size, cfg.env.screen_size),
                         dtype=v.dtype
                     )
                 else:
@@ -1482,11 +1507,11 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                     )
             observation_space = gym.spaces.Dict(obs_space_dict)
         ## NOTE: all Libero90 datapoints are concatonated sequences of 64 frames.
-
+        # import pdb; pdb.set_trace()
 
 
         # Split into train and validation
-        generator1 = torch.Generator().manual_seed(42)
+        generator1 = torch.Generator().manual_seed(cfg.seed)
         train_split, val_split = torch.utils.data.random_split(
             dataset=concat_dataset,
             lengths=[cfg.algo.offline_train_split, 1-cfg.algo.offline_train_split],
@@ -1536,9 +1561,10 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             )
 
 
-        action_space = envs.single_action_space
+        # action_space = envs.single_action_space
+        # observation_space = envs.single_observation_space
+
         # action_space = gym.spaces.Box(low=-1, high=1, shape=(7,), dtype=np.float32)
-        observation_space = envs.single_observation_space
         # observation_space = gym.spaces.Dict({
         #     'rgb': gym.spaces.Box(low=0, high=255, shape=(3, 64, 64), dtype=np.uint8),
         #     'state': gym.spaces.Box(low=-1, high=1, shape=(32,), dtype=np.float64)
@@ -1813,7 +1839,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                             save_obs=True,
                             # val_aggregator=val_aggregator,
                             )
-
+                    print('val finished')
                     # Sync distributed metrics
                     if aggregator and not aggregator.disabled:
                         metrics_dict = aggregator.compute()
@@ -1824,7 +1850,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                     fabric.log(
                         "Params/replay_ratio", cumulative_per_rank_gradient_steps * world_size / policy_step, policy_step
                     )
-
+                    print('log finished')
                     # Sync distributed timers
                     if not timer.disabled:
                         timer_metrics = timer.compute()
