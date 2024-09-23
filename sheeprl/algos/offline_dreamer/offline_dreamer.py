@@ -466,7 +466,7 @@ def train(
         aggregator.update("Loss/continue_loss", continue_loss.detach())
         if cem_data:
             aggregator.update("Loss/concept_loss", loss_dict['concept_loss'].detach())
-            aggregator.update("Loss/orthognality_loss", loss_dict['concept_loss'].detach())
+            aggregator.update("Loss/orthognality_loss", loss_dict['orthognality_loss'].detach())
             try:
                 aggregator.update("Loss/per_concept_loss", loss_dict['loss_per_concept'].detach())
             except Exception as e:

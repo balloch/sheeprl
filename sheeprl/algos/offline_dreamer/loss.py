@@ -146,7 +146,7 @@ def reconstruction_loss(
         #TODO replace with actual concepts
         # pred_concepts, target_concepts, real_concept_latent, real_non_concept_latent, rand_concept_latent, rand_non_concept_latent = cem_data
         concept_loss, loss_per_concept = get_concept_loss(world_model.cem, cem_data['concept_logits'], cem_data['target_concepts'])
-        loss_dict['concept_loss'] = concept_loss.mean()
+        loss_dict['concept_loss'] = concept_loss  # .mean()
         loss_dict['loss_per_concept'] = loss_per_concept
         orthognality_loss = []
         for c in range(world_model.cem.n_concepts):  #TODO why sum?
@@ -157,7 +157,6 @@ def reconstruction_loss(
                 cem_data['rand_concept_latent'][:, :, c*world_model.cem.emb_size: (c*world_model.cem.emb_size) + world_model.cem.emb_size],
                 cem_data['rand_non_concept_latent']))
         loss_dict['orthognality_loss'] = torch.stack(orthognality_loss).mean()
-
         cbm_loss = concept_reg * concept_loss + ortho_reg * loss_dict['orthognality_loss']
         loss_dict['cbm_loss'] = cbm_loss.mean()
 
