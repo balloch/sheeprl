@@ -14,6 +14,10 @@ from pathlib import Path
 import h5py
 import json
 import timeit
+from pyinstrument import Profiler
+import pyinstrument
+from pyinstrument.renderers import ConsoleRenderer
+from tqdm import tqdm
 
 import gymnasium as gym
 import hydra
@@ -497,58 +501,58 @@ def train(
 
 
 
-class LIBERODataset(Dataset):
-    def __init__(self, file_path):
-        self.file = h5py.File(file_path, 'r')
-        self.data = self.file['data']
-        self.demo_keys = [k for k in self.data.keys() if k.startswith('demo_')]
+# class LIBERODataset(Dataset):
+#     def __init__(self, file_path):
+#         self.file = h5py.File(file_path, 'r')
+#         self.data = self.file['data']
+#         self.demo_keys = [k for k in self.data.keys() if k.startswith('demo_')]
 
-        # Get total number of samples
-        self.total_samples = self.data.attrs['total']
+#         # Get total number of samples
+#         self.total_samples = self.data.attrs['total']
 
-        # Get environment arguments
-        self.env_args = json.loads(self.data.attrs['env_args'])
+#         # Get environment arguments
+#         self.env_args = json.loads(self.data.attrs['env_args'])
 
-        # Create sample index mapping
-        self.sample_map = []
-        for demo_key in self.demo_keys:
-            demo = self.data[demo_key]
-            num_samples = demo.attrs['num_samples']
-            self.sample_map.extend([(demo_key, i) for i in range(num_samples)])
+#         # Create sample index mapping
+#         self.sample_map = []
+#         for demo_key in self.demo_keys:
+#             demo = self.data[demo_key]
+#             num_samples = demo.attrs['num_samples']
+#             self.sample_map.extend([(demo_key, i) for i in range(num_samples)])
 
-    def __len__(self):
-        return self.total_samples
+#     def __len__(self):
+#         return self.total_samples
 
-    def __getitem__(self, idx):
-        demo_key, sample_idx = self.sample_map[idx]
-        demo = self.data[demo_key]
+#     def __getitem__(self, idx):
+#         demo_key, sample_idx = self.sample_map[idx]
+#         demo = self.data[demo_key]
 
-        # Load observation
-        obs = {k: torch.from_numpy(demo['obs'][k][sample_idx]) for k in demo['obs'].keys()}
+#         # Load observation
+#         obs = {k: torch.from_numpy(demo['obs'][k][sample_idx]) for k in demo['obs'].keys()}
 
-        # Load action, reward, and done
-        action = torch.from_numpy(demo['actions'][sample_idx])
-        reward = torch.tensor(demo['rewards'][sample_idx])
-        done = torch.tensor(demo['dones'][sample_idx])
+#         # Load action, reward, and done
+#         action = torch.from_numpy(demo['actions'][sample_idx])
+#         reward = torch.tensor(demo['rewards'][sample_idx])
+#         done = torch.tensor(demo['dones'][sample_idx])
 
-        # Load next observation
-        next_obs = {k: torch.from_numpy(demo['next_obs'][k][sample_idx]) for k in demo['next_obs'].keys()}
+#         # Load next observation
+#         next_obs = {k: torch.from_numpy(demo['next_obs'][k][sample_idx]) for k in demo['next_obs'].keys()}
 
-        return obs, action, reward, done, next_obs
+#         return obs, action, reward, done, next_obs
 
-    def close(self):
-        self.file.close()
+#     def close(self):
+#         self.file.close()
 
-def load_dataset(data_path, batch_size, num_workers=4):
-    dataset = LIBERODataset(data_path)
-    dataloader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=True
-    )
-    return dataloader, dataset.env_args
+# def load_dataset(data_path, batch_size, num_workers=4):
+#     dataset = LIBERODataset(data_path)
+#     dataloader = DataLoader(
+#         dataset,
+#         batch_size=batch_size,
+#         shuffle=True,
+#         num_workers=num_workers,
+#         pin_memory=True
+#     )
+#     return dataloader, dataset.env_args
 
 
 def get_datasets_from_benchmark(benchmark,libero_folder,seq_len=64,obs_modality=None):
@@ -647,46 +651,6 @@ class TransformedDictDataset(Dataset):
         return data_item
 
 
-class RestructureAndResizeTransform:
-    def __init__(self, image_size, num_samples):
-        self.image_size = image_size
-        self.num_samples = num_samples
-        self.transform = v2.Resize((image_size, image_size))
-        # transforms.Compose([
-            # transforms.ToPILImage(),
-            # v2.Resize((image_size, image_size)),
-            # transforms.ToTensor(),
-        # ])
-        # self.resize = lambda data: v2.functional.resize(data['obs']['agentview_rgb'],size=(64,64))
-
-    def __call__(self, batch):
-        # Restructure and resize observations
-        print(batch[0].keys())
-        obs, action, reward, done, next_obs = batch
-
-        # Resize observations
-        for k in obs.keys():
-            if len(obs[k].shape) >= 3:  # Assume image data has 3 dimensions (C, H, W)
-                obs[k] = self.transform(obs[k])
-
-
-        return obs, action, reward, done
-
-
-        # actions = actions.unsqueeze(0).expand(self.num_samples, -1, -1)
-        # rewards = rewards.unsqueeze(0).expand(self.num_samples, -1)
-
-        # # Split dones into truncated and terminated
-        # truncated = dones.unsqueeze(0).expand(self.num_samples, -1)
-        # terminated = dones.unsqueeze(0).expand(self.num_samples, -1)
-
-        # Expand is_first
-        is_first = is_first.unsqueeze(0).expand(self.num_samples, -1)
-
-        return processed_obs, actions, rewards, truncated, terminated, is_first
-
-
-
 @torch.inference_mode()
 def validate_wm(
     fabric: Fabric,
@@ -731,7 +695,9 @@ def validate_wm(
         'f1_score': []
     }
     qualitative_log = False
-    init_batch = next(iter(dataloader))
+    init_dl = iter(dataloader)
+    init_batch = next(init_dl)
+    del init_dl
 
     # import pdb; pdb.set_trace()
     is_first_dummy_tensor = torch.cat((
@@ -743,8 +709,7 @@ def validate_wm(
         is_first_dummy_tensor.shape[0]//2,
         *is_first_dummy_tensor.shape[1:]).permute(0,2,1,).unsqueeze(-1).to(device)
 
-
-    for val_idx, data in enumerate(dataloader):
+    for val_idx, data in tqdm(enumerate(dataloader), unit="batch", total=len(dataloader), leave=False):
         # import pdb; pdb.set_trace()
         for key, v in data.items():
             if isinstance(v, torch.Tensor):
@@ -910,6 +875,7 @@ def validate_wm(
             aggregator.update("Val/concept_f1_score", concept_mean_metrics['f1_score'])
             aggregator.update("Val/concept_accuracy", concept_mean_metrics['accuracy'])
             aggregator.update("Val/observation_error", observation_error)
+
             # aggregator.update("Val/world_model_loss", rec_loss.detach())
             # aggregator.update("Val/observation_loss", observation_loss.detach())
             # aggregator.update("Val/reward_loss", reward_loss.detach())
@@ -918,17 +884,23 @@ def validate_wm(
             # aggregator.update("Val/concept_loss", loss_dict['concept_loss'].detach())
             # aggregator.update("Val/orthognality_loss", loss_dict['concept_loss'].detach())
             # aggregator.update("Val/per_concept_loss", loss_dict['loss_per_concept'].detach())
-        if val_idx > 100:
-            print('hit0')
-            # TODO why is there a long delay between hit0 and hit1?
-            break
-        if val_idx % 25 == 0 and val_idx > 0:
-            print(f"Val/{val_idx}: {concept_mean_metrics}")
-    print('hit1')
-    # for key, concept_val in concept_metrics.items():
-    #     # concept_metrics[key] = concept_metrics[key].detach().numpy()
-    #     print(f"Val/{key}: {np.stack(concept_val, axis=0).mean(axis=0)}")
-    print('hit2')
+
+        # if val_idx > 100:
+        #     print('hit0')
+        #     # TODO why is there a long delay between hit0 and hit1?
+        #     break
+        # if val_idx % 25 == 0 and val_idx > 0:
+        #     print(f"Val/{val_idx}: {concept_mean_metrics}")
+
+    # print('hit1')
+    # print("get_num_threads: " ,torch.get_num_threads())
+    # print("get_num_interop_threads: " ,torch.get_num_interop_threads())
+    # import pdb; pdb.set_trace()
+    for key, concept_val in concept_mean_metrics.items():  # concept_metrics.items():
+        # concept_metrics[key] = concept_metrics[key].detach().numpy()
+        # tqdm.write(f"Val/{key}: {np.stack(concept_val, axis=0).mean(axis=0)}")
+        tqdm.write(f"Val/{key}: {concept_val}")
+    # print('hit2')
 
 
 @register_algorithm()
@@ -1185,7 +1157,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                                 axis=-1,
                             )
                     else:
-                        import pdb; pdb.set_trace()
+                        import pdb; pdb.set_trace() # TODO what does prepare_obs do?
                         torch_obs = prepare_obs(fabric, obs, cnn_keys=cfg.algo.cnn_keys.encoder, num_envs=cfg.env.num_envs)
                         mask = {k: v for k, v in torch_obs.items() if k.startswith("mask")}
                         if len(mask) == 0:
@@ -1445,11 +1417,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
 
         libero_folder = get_libero_path("datasets")
         bddl_folder = get_libero_path("bddl_files")
-        init_states_folder = get_libero_path("init_states")
-        eval_num_procs = 1
-        eval_n_eval = 5
-
-        train_n_epochs = 25
 
         task_order = 0  # Default task order
         benchmark_name = "libero_90" # TODO add to config can be from {"libero_spatial", "libero_object", "libero_goal", "libero_10"}
@@ -1519,8 +1486,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             )
         train_transforms_dict = {
             'agentview_rgb': v2.Compose([
-                # v2.ToTensor(),
-                # v2.ToDtype(torch.float32, scale=True),
                 v2.Resize((cfg.env.screen_size, cfg.env.screen_size)),
                 v2.Pad(4,padding_mode=cfg.train_transforms.Pad.pad_type),
                 v2.RandomCrop(cfg.env.screen_size),
@@ -1531,17 +1496,21 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             transform_dict=train_transforms_dict,
             ratio=int(1.0/cfg.algo.replay_ratio)
             )
+        # torch.multiprocessing.set_sharing_strategy('file_system')  # Helped but only sligtly
         train_dataloader = DataLoader(
             train_dataset,
             batch_size=cfg.algo.per_rank_batch_size * 2, # replay_ratio=0.5 This is hacky, but Ratio is confusing
             shuffle=True,
-            num_workers=4,
-            pin_memory=True,
+            num_workers=0, #4,
+            # persistent_workers=True,
+            # pin_memory=True,
             drop_last=True,
+            # prefetch_factor=10,
+            # multiprocessing_context='fork',
+            # timeout=600, # 10 minutes for validation
             )
         val_transforms_dict = {
             'agentview_rgb': v2.Compose([
-                # v2.ToImage(),
                 v2.Resize((cfg.env.screen_size, cfg.env.screen_size)),
                 # v2.Pad(4,padding_mode=cfg.val_transforms.Pad.pad_type),
                 # v2.RandomCrop(cfg.env.screen_size),
@@ -1551,12 +1520,14 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             dataset=val_split,
             transform_dict=val_transforms_dict
             )
+        # import pdb; pdb.set_trace()
         val_dataloader = DataLoader(
             val_dataset,
-            batch_size=cfg.algo.per_rank_batch_size, # replay_ratio=0.5 This is hacky, but Ratio is confusing
+            batch_size=cfg.algo.per_rank_batch_size,
             shuffle=True,
-            num_workers=4,
-            pin_memory=True,
+            num_workers=2,
+            # persistent_workers=True,
+            pin_memory=False,
             drop_last=True,
             )
 
@@ -1731,7 +1702,9 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
         cumulative_per_rank_gradient_steps = 0
         iter_num = start_iter
 
-        init_batch = next(iter(train_dataloader))
+        init_dl = iter(train_dataloader)
+        init_batch = next(init_dl)
+        del init_dl
 
         # import pdb; pdb.set_trace()
         is_first_dummy_tensor = torch.cat((
@@ -1749,10 +1722,21 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
 
         cfg.buffer.checkpoint = False  #only when offline learning TODO probably should be an assert
 
+        profile_renderer = ConsoleRenderer(unicode=True, color=True, show_all=True)
+
         for epoch in range(cfg.algo.num_epochs):
             print(f"Epoch {epoch}")
-            for batch in train_dataloader:
-                print(f"iter_num={iter_num}")
+
+            # if cfg.do_profile:
+            #     with pyinstrument.profile():
+
+            if cfg.do_profile:
+                profiler = Profiler()
+                profiler.start()
+
+            # import pdb; pdb.set_trace()
+            for train_idx, batch in tqdm(enumerate(train_dataloader), unit="batch", total=len(train_dataloader)):
+                # print(f"iter_num={iter_num}")
 
                 ## Expand based on training ratio. TODO This feels like I should be able to do it in the dataloader collate_fn:
                 for key, v in batch.items():
@@ -1825,21 +1809,9 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
 
                 ## Log metrics Phase
                 if cfg.metric.log_level > 0 and (policy_step - last_log >= cfg.metric.log_every or iter_num == total_iters):
-                    print(f"policy_step={policy_step}, last_log={last_log}")
+                    tqdm.write(f"Logging at policy_step={policy_step} (last_log={last_log})")
+                    # print(f"policy_step={policy_step}, last_log={last_log}")
 
-                    # Validate on validation set
-                    with torch.inference_mode() and timer("Time/train_time", SumMetric, sync_on_compute=cfg.metric.sync_on_compute):
-                        validate_wm(
-                            fabric=fabric,
-                            world_model=world_model,
-                            dataloader=val_dataloader,
-                            aggregator=aggregator,
-                            cfg=cfg,
-                            compiled_dynamic_learning=compiled_dynamic_learning,
-                            save_obs=True,
-                            # val_aggregator=val_aggregator,
-                            )
-                    print('val finished')
                     # Sync distributed metrics
                     if aggregator and not aggregator.disabled:
                         metrics_dict = aggregator.compute()
@@ -1850,7 +1822,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                     fabric.log(
                         "Params/replay_ratio", cumulative_per_rank_gradient_steps * world_size / policy_step, policy_step
                     )
-                    print('log finished')
+
                     # Sync distributed timers
                     if not timer.disabled:
                         timer_metrics = timer.compute()
@@ -1874,12 +1846,33 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                     last_train = train_step
 
                 ## Checkpoint Model Phase
+                # import pdb; pdb.set_trace()
                 # print(f"policy_step={policy_step}, last_checkpoint={last_checkpoint}, iter_num={iter_num}")
                 # print(f" checkpoint? {policy_step - last_checkpoint >= cfg.checkpoint.every}")
                 if (cfg.checkpoint.every > 0 and policy_step - last_checkpoint >= cfg.checkpoint.every) or (
                     iter_num == total_iters and cfg.checkpoint.save_last
                 ):
-                    print(f"checkpoint at policy_step={policy_step}")
+                    tqdm.write(f"Checkpointing/Validating at policy_step={policy_step} (last_checkpoint={last_checkpoint})")
+                    # Validate on validation set
+                    with torch.inference_mode() and timer("Time/val_time", SumMetric, sync_on_compute=cfg.metric.sync_on_compute):
+                        validate_wm(
+                            fabric=fabric,
+                            world_model=world_model,
+                            dataloader=val_dataloader,
+                            aggregator=aggregator,
+                            cfg=cfg,
+                            compiled_dynamic_learning=compiled_dynamic_learning,
+                            save_obs=True,
+                            # val_aggregator=val_aggregator,
+                            )
+
+                        # Sync distributed metrics
+                        if aggregator and not aggregator.disabled:
+                            metrics_dict = aggregator.compute()
+                            fabric.log_dict(metrics_dict, policy_step)
+                            aggregator.reset()
+
+                    # print(f"checkpoint at policy_step={policy_step}")
                     last_checkpoint = policy_step
                     state = {
                         "world_model": world_model.state_dict(),
@@ -1907,11 +1900,44 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                     # print(f"iter_num={iter_num}")
                 iter_num += 1  # 1 for num_updates, update_samples = cfg.algo.per_rank_batch_size * fabric.world_size
 
-                if iter_num > total_iters:
+                if iter_num > total_iters: # TODO DEBUGGING 160 : #
                     break
             else:  # Continue if the inner loop wasn't broken
                 continue
-            # break
+                # break the outer loop
+
+                            # if cfg.do_pr`ofile:
+            # try:
+            # profiler.stop()
+            pyintsession = profiler.stop()
+            print(profile_renderer.render(pyintsession))
+            # profiler.print()
+            # except Exception as e:
+            #     print(f"Error stopping profiler: {e}")
+            #     profiler.start()
+                                # Validate on validation set
+            with torch.inference_mode():
+                validate_wm(
+                    fabric=fabric,
+                    world_model=world_model,
+                    dataloader=val_dataloader,
+                    aggregator=aggregator,
+                    cfg=cfg,
+                    compiled_dynamic_learning=compiled_dynamic_learning,
+                    save_obs=True,
+                    # val_aggregator=val_aggregator,
+                    )
+            # print('val finished')
+            # Sync distributed metrics
+            if aggregator and not aggregator.disabled:
+                metrics_dict = aggregator.compute()
+                fabric.log_dict(metrics_dict, policy_step)
+                aggregator.reset()
+
+
+
+
+
 
     if fabric.is_global_zero and cfg.algo.run_test:
         test(player, fabric, cfg, log_dir, greedy=False)

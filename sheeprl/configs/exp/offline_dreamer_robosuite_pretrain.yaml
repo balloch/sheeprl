@@ -2,7 +2,7 @@
 
 defaults:
   - offline_dreamer_robosuite
-  - override /algo: offline_dreamer_S
+  - override /algo: offline_dreamer_manip
   - override /env: robosuite
   - _self_
 
@@ -43,8 +43,10 @@ buffer:
 
 # Algorithm
 algo:
+  run_test: False
   per_rank_batch_size: 32
   offline: True
+  offline_train_split: 0.9
   total_steps: 500_000
   cnn_keys:
     encoder:

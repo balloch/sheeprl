@@ -161,7 +161,16 @@ def reconstruction_loss(
         cbm_loss = concept_reg * concept_loss + ortho_reg * loss_dict['orthognality_loss']
         loss_dict['cbm_loss'] = cbm_loss.mean()
 
-        reconstruction_loss = (kl_regularizer * kl_loss + observation_loss + reward_loss + continue_loss + cbm_loss).mean()
+        obs_reg = 0.002
+        reward_reg = 0.1
+        cont_reg = 1.0
+
+        reconstruction_loss = (
+            kl_regularizer * kl_loss +
+            obs_reg * observation_loss +
+            reward_reg * reward_loss +
+            cont_reg * continue_loss +
+            cbm_loss).mean()
 
     return (
         reconstruction_loss,
