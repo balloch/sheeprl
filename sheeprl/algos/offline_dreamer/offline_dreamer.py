@@ -14,6 +14,7 @@ from pathlib import Path
 import h5py
 import json
 import timeit
+import imageio
 from pyinstrument import Profiler
 import pyinstrument
 from pyinstrument.renderers import ConsoleRenderer
@@ -320,24 +321,23 @@ def train(
     # World model optimization step. Eq. 4 in the paper
     world_optimizer.zero_grad(set_to_none=True)
     rec_loss, loss_dict = reconstruction_loss(
-        po,
-        batch_obs,
-        pr,
-        data["rewards"],
-        priors_logits,
-        posteriors_logits,
-        world_model,
-        cem_data,
-        cfg.algo.world_model.cbm_model.use_cbm,
-        cfg.algo.world_model.kl_dynamic,
-        cfg.algo.world_model.kl_representation,
-        cfg.algo.world_model.kl_free_nats,
-        cfg.algo.world_model.kl_regularizer,
-        pc,
-        continues_targets,
-        cfg.algo.world_model.continue_scale_factor,
-        cfg.algo.world_model.cbm_model.ortho_reg,
-        cfg.algo.world_model.cbm_model.concept_reg
+        po=po,
+        observations=batch_obs,
+        pr=pr,
+        rewards=data["rewards"],
+        priors_logits=priors_logits,
+        posteriors_logits=posteriors_logits,
+        world_model=world_model,
+        cem_data=cem_data,
+        use_cbm=cfg.algo.world_model.cbm_model.use_cbm,
+        kl_dynamic=cfg.algo.world_model.kl_dynamic,
+        kl_representation=cfg.algo.world_model.kl_representation,
+        kl_free_nats=cfg.algo.world_model.kl_free_nats,
+        kl_regularizer=cfg.algo.world_model.kl_regularizer,
+        pc=pc,
+        continue_targets=continues_targets,
+        continue_scale_factor=cfg.algo.world_model.continue_scale_factor,
+        cfg=cfg,
     )
     kl = loss_dict['kl']
     state_loss = loss_dict['kl_loss']
@@ -688,13 +688,14 @@ def validate_wm(
     stochastic_size = cfg.algo.world_model.stochastic_size
     discrete_size = cfg.algo.world_model.discrete_size
     device = fabric.device
+
     concept_metrics = {
         'precision': [],
         'recall': [],
         'accuracy': [],
         'f1_score': []
     }
-    qualitative_log = False
+    vid_saved = False
     init_dl = iter(dataloader)
     init_batch = next(init_dl)
     del init_dl
@@ -764,6 +765,33 @@ def validate_wm(
 
         # Compute predictions for the observations
         reconstructed_obs: Dict[str, torch.Tensor] = world_model.observation_model(latent_states)
+        recon_sigmoid = torch.nn.functional.sigmoid(reconstructed_obs['agentview_rgb']).permute(0,1,3,4,2)
+        if save_obs and val_idx>9 and not vid_saved:
+            log_dir = get_log_dir(fabric, cfg.root_dir, cfg.run_name) + '/val_vids'
+            os.makedirs(log_dir, exist_ok=True)
+            os.chmod(log_dir, 0o777)
+
+            def increment_filename(directory, filename):
+                name, ext = os.path.splitext(filename)
+                version = 1
+                new_filename = filename
+                while os.path.exists(os.path.join(directory, new_filename)):
+                    # Create a new filename by appending the version number
+                    new_filename = f"{name}_{version}{ext}"
+                    version += 1
+                return new_filename
+
+            filename = increment_filename(log_dir, f'/recon_vid_{val_idx}.mp4')
+            video=255*recon_sigmoid[:,cfg.seed,...].cpu().numpy()
+            video=video.astype(np.uint8)
+            with open(log_dir + filename, 'wb') as f:
+                imageio.v3.imwrite(
+                    uri=f,
+                    image=video,
+                    plugin='FFMPEG',
+                    extension='.mp4',
+                    )
+            vid_saved = True
         # if "wandb" in cfg.metric.logger._target_.lower() and qualitative_log is False:
         #     # import pdb; pdb.set_trace()
         #     wandb.log({"data_video": wandb.Video(
@@ -776,7 +804,8 @@ def validate_wm(
         #         })
         #     # import pdb; pdb.set_trace()
         #     qualitative_log = True
-        observation_error = torch.dist(reconstructed_obs['agentview_rgb'], data['agentview_rgb'])
+        # torch.nn.functional.sigmoid(reconstructed_obs['agentview_rgb'])
+        observation_error = torch.dist(reconstructed_obs['agentview_rgb'], batch_obs['agentview_rgb'], p=2)
 
         concept_probs = cem_data['concept_probs'] #[...,::2] # only take the positive concept probs
         target_concepts = cem_data['target_concepts']
@@ -784,11 +813,12 @@ def validate_wm(
         # Binarize predictions (multi-hot)
         predicted = (concept_probs >= 0.5).float()
 
+        # import pdb; pdb.set_trace()
         # True Positives (TP), False Positives (FP), False Negatives (FN)
-        TP = (predicted * target_concepts).sum(dim=(0, 1)).detach()  # Sum over batch and sequence dimension
-        FP = ((predicted == 1) & (target_concepts == 0)).sum(dim=(0, 1)).detach()
-        FN = ((predicted == 0) & (target_concepts == 1)).sum(dim=(0, 1)).detach()
-        TN = ((predicted == 0) & (target_concepts == 0)).sum(dim=(0, 1)).detach()
+        TP = (predicted * target_concepts).sum(dim=(0, 1))  # Sum over batch and sequence dimension
+        FP = ((predicted == 1) & (target_concepts == 0)).sum(dim=(0, 1))
+        FN = ((predicted == 0) & (target_concepts == 1)).sum(dim=(0, 1))
+        TN = ((predicted == 0) & (target_concepts == 0)).sum(dim=(0, 1))
 
         eps=1e-10
         concept_precision = TP / (TP + FP + eps)
@@ -841,24 +871,23 @@ def validate_wm(
 
         # # World model optimization step. Eq. 4 in the paper
         # rec_loss, loss_dict = reconstruction_loss(
-        #     po,
-        #     batch_obs,
-        #     pr,
-        #     data["rewards"],
-        #     priors_logits,
-        #     posteriors_logits,
-        #     world_model,
-        #     cem_data,
-        #     cfg.algo.world_model.cbm_model.use_cbm,
-        #     cfg.algo.world_model.kl_dynamic,
-        #     cfg.algo.world_model.kl_representation,
-        #     cfg.algo.world_model.kl_free_nats,
-        #     cfg.algo.world_model.kl_regularizer,
-        #     pc,
-        #     continues_targets,
-        #     cfg.algo.world_model.continue_scale_factor,
-        #     cfg.algo.world_model.cbm_model.ortho_reg,
-        #     cfg.algo.world_model.cbm_model.concept_reg
+        #     po=po,
+        #     observations=batch_obs,
+        #     pr=pr,
+        #     rewards=data["rewards"],
+        #     priors_logits=priors_logits,
+        #     posteriors_logits=posteriors_logits,
+        #     world_model=world_model,
+        #     cem_data=cem_data,
+        #     use_cbm=cfg.algo.world_model.cbm_model.use_cbm,
+        #     kl_dynamic=cfg.algo.world_model.kl_dynamic,
+        #     kl_representation=cfg.algo.world_model.kl_representation,
+        #     kl_free_nats=cfg.algo.world_model.kl_free_nats,
+        #     kl_regularizer=cfg.algo.world_model.kl_regularizer,
+        #     pc=pc,
+        #     continue_targets=continues_targets,
+        #     continue_scale_factor=cfg.algo.world_model.continue_scale_factor,
+        #     config=cfg,
         # )
 
         # # kl = loss_dict['kl']
@@ -1862,7 +1891,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                             aggregator=aggregator,
                             cfg=cfg,
                             compiled_dynamic_learning=compiled_dynamic_learning,
-                            save_obs=True,
+                            save_obs=cfg.val_video,
                             # val_aggregator=val_aggregator,
                             )
 

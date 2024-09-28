@@ -8,7 +8,7 @@ defaults:
 
 # Experiment
 seed: 5
-
+val_video: True
 train_transforms:
   Pad:
     pad: 4

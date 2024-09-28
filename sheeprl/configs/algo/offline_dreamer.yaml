@@ -118,6 +118,7 @@ world_model:
 
   # Decoder
   observation_model:
+    decoder_reg: 1.0
     cnn_channels_multiplier: ${algo.world_model.encoder.cnn_channels_multiplier}
     cnn_act: ${algo.cnn_act}
     dense_act: ${algo.dense_act}
@@ -131,6 +132,7 @@ world_model:
 
   # Reward model
   reward_model:
+    reward_reg: 1.0
     dense_act: ${algo.dense_act}
     mlp_layers: ${algo.mlp_layers}
     layer_norm: ${algo.mlp_layer_norm}
@@ -142,6 +144,7 @@ world_model:
 
   # Discount model
   discount_model:
+    cont_reg: 1.0
     learnable: True
     dense_act: ${algo.dense_act}
     mlp_layers: ${algo.mlp_layers}
