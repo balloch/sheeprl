@@ -1096,8 +1096,11 @@ def build_agent(
     recurrent_state_size = world_model_cfg.recurrent_model.recurrent_state_size
     stochastic_size = world_model_cfg.stochastic_size * world_model_cfg.discrete_size
     latent_state_size = stochastic_size + recurrent_state_size
-    cem_latent_state_size = (world_model_cfg.cbm_model.n_concepts + 1) * world_model_cfg.cbm_model.emb_size + \
-        sum(world_model_cfg.cbm_model.concept_bins)
+    if world_model_cfg.cbm_model.use_cbm is True:
+        model_latent_state_size = (world_model_cfg.cbm_model.n_concepts + 1) * world_model_cfg.cbm_model.emb_size + \
+            sum(world_model_cfg.cbm_model.concept_bins)
+    else:
+        model_latent_state_size = latent_state_size
 
     # Define models
     cnn_stages = int(np.log2(cfg.env.screen_size) - np.log2(4))
@@ -1192,7 +1195,7 @@ def build_agent(
             keys=cfg.algo.cnn_keys.decoder,
             output_channels=[int(np.prod(obs_space[k].shape[:-2])) for k in cfg.algo.cnn_keys.decoder],
             channels_multiplier=world_model_cfg.observation_model.cnn_channels_multiplier,
-            latent_state_size=cem_latent_state_size,
+            latent_state_size=model_latent_state_size,
             cnn_encoder_output_dim=cnn_encoder.output_dim,
             image_size=obs_space[cfg.algo.cnn_keys.decoder[0]].shape[-2:],
             activation=hydra.utils.get_class(world_model_cfg.observation_model.cnn_act),
@@ -1207,7 +1210,7 @@ def build_agent(
         MLPDecoder(
             keys=cfg.algo.mlp_keys.decoder,
             output_dims=[obs_space[k].shape[0] for k in cfg.algo.mlp_keys.decoder],
-            latent_state_size=cem_latent_state_size,
+            latent_state_size=model_latent_state_size,
             mlp_layers=world_model_cfg.observation_model.mlp_layers,
             dense_units=world_model_cfg.observation_model.dense_units,
             activation=hydra.utils.get_class(world_model_cfg.observation_model.dense_act),
@@ -1221,7 +1224,7 @@ def build_agent(
 
     reward_ln_cls = hydra.utils.get_class(world_model_cfg.reward_model.layer_norm.cls)
     reward_model = MLP(
-        input_dims=cem_latent_state_size,
+        input_dims=model_latent_state_size,
         output_dim=world_model_cfg.reward_model.bins,
         hidden_sizes=[world_model_cfg.reward_model.dense_units] * world_model_cfg.reward_model.mlp_layers,
         activation=hydra.utils.get_class(world_model_cfg.reward_model.dense_act),
@@ -1236,7 +1239,7 @@ def build_agent(
 
     discount_ln_cls = hydra.utils.get_class(world_model_cfg.discount_model.layer_norm.cls)
     continue_model = MLP(
-        input_dims=cem_latent_state_size,
+        input_dims=model_latent_state_size,
         output_dim=1,
         hidden_sizes=[world_model_cfg.discount_model.dense_units] * world_model_cfg.discount_model.mlp_layers,
         activation=hydra.utils.get_class(world_model_cfg.discount_model.dense_act),
@@ -1277,7 +1280,7 @@ def build_agent(
 
     actor_cls = hydra.utils.get_class(cfg.algo.actor.cls)
     actor: Actor | MinedojoActor = actor_cls(
-        latent_state_size=cem_latent_state_size,
+        latent_state_size=model_latent_state_size,
         actions_dim=actions_dim,
         is_continuous=is_continuous,
         init_std=actor_cfg.init_std,
@@ -1294,7 +1297,7 @@ def build_agent(
 
     critic_ln_cls = hydra.utils.get_class(critic_cfg.layer_norm.cls)
     critic = MLP(
-        input_dims=cem_latent_state_size,
+        input_dims=model_latent_state_size,
         output_dim=critic_cfg.bins,
         hidden_sizes=[critic_cfg.dense_units] * critic_cfg.mlp_layers,
         activation=hydra.utils.get_class(critic_cfg.dense_act),
