@@ -104,7 +104,6 @@ def dynamic_learning(
         posterior = torch.zeros(1, batch_size, stochastic_size, discrete_size, device=device)
         posteriors = torch.empty(sequence_length, batch_size, stochastic_size, discrete_size, device=device)
         posteriors_logits = torch.empty(sequence_length, batch_size, stoch_state_size, device=device)
-        # import pdb; pdb.set_trace()
         for i in range(0, sequence_length):
             recurrent_state, posterior, _, posterior_logits, prior_logits = world_model.rssm.dynamic(
                 posterior,
@@ -294,7 +293,7 @@ def train(
 
     # Compute predictions for the observations
     reconstructed_obs: Dict[str, torch.Tensor] = world_model.observation_model(latent_states)
-    # import pdb; pdb.set_trace()
+
     # Compute the distribution over the reconstructed observations
     po = {
         k: MSEDistribution(reconstructed_obs[k], dims=len(reconstructed_obs[k].shape[2:]))
@@ -700,7 +699,6 @@ def validate_wm(
     init_batch = next(init_dl)
     del init_dl
 
-    # import pdb; pdb.set_trace()
     is_first_dummy_tensor = torch.cat((
         torch.ones((1,init_batch['terminated'].shape[0])),
         torch.zeros((init_batch['terminated'].shape[1]-1,init_batch['terminated'].shape[0]))
@@ -711,10 +709,8 @@ def validate_wm(
         *is_first_dummy_tensor.shape[1:]).permute(0,2,1,).unsqueeze(-1).to(device)
 
     for val_idx, data in tqdm(enumerate(dataloader), unit="batch", total=len(dataloader), leave=False):
-        # import pdb; pdb.set_trace()
         for key, v in data.items():
             if isinstance(v, torch.Tensor):
-                # import pdb; pdb.set_trace()
                 data[key] = v.to(device) # NOTE: moving image data to GPU takes about 0.03s, can it be faster?
                 # permute to match env
                 if len(data[key].shape) == 2: # rewards, truncated, terminated
@@ -731,9 +727,7 @@ def validate_wm(
                     f"All should be torch.Tensor, got {type(v)} for {key}")
         data['is_first'] = is_first_dummy_tensor
 
-        # import pdb; pdb.set_trace()
         batch_obs = {k: data[k] - 0.5 for k in cfg.algo.cnn_keys.encoder}
-        # import pdb; pdb.set_trace()
         batch_obs.update({k: data[k] for k in cfg.algo.mlp_keys.encoder})
         # data["is_first"][0, :] = torch.ones_like(data["is_first"][0, :])
         data["is_first"] = torch.ones_like(data["terminated"])
@@ -765,13 +759,18 @@ def validate_wm(
 
         # Compute predictions for the observations
         reconstructed_obs: Dict[str, torch.Tensor] = world_model.observation_model(latent_states)
-        recon_sigmoid = torch.nn.functional.sigmoid(reconstructed_obs['agentview_rgb']).permute(0,1,3,4,2)
+        # recon_sigmoid = torch.nn.functional.sigmoid(reconstructed_obs['agentview_rgb']).permute(0,1,3,4,2)
+        recon_sigmoid = reconstructed_obs['agentview_rgb'].permute(0,1,3,4,2)+0.5
+        recon_sigmoid[recon_sigmoid<0] = 0
+        recon_sigmoid[recon_sigmoid>1] = 1
         if save_obs and val_idx>9 and not vid_saved:
             log_dir = get_log_dir(fabric, cfg.root_dir, cfg.run_name) + '/val_vids'
             os.makedirs(log_dir, exist_ok=True)
             os.chmod(log_dir, 0o777)
 
             def increment_filename(directory, filename):
+                if filename[0] == '/':
+                    filename = filename[1:]
                 name, ext = os.path.splitext(filename)
                 version = 1
                 new_filename = filename
@@ -784,7 +783,7 @@ def validate_wm(
             filename = increment_filename(log_dir, f'/recon_vid_{val_idx}.mp4')
             video=255*recon_sigmoid[:,cfg.seed,...].cpu().numpy()
             video=video.astype(np.uint8)
-            with open(log_dir + filename, 'wb') as f:
+            with open(os.path.join(log_dir, filename), 'wb') as f:
                 imageio.v3.imwrite(
                     uri=f,
                     image=video,
@@ -793,7 +792,6 @@ def validate_wm(
                     )
             vid_saved = True
         # if "wandb" in cfg.metric.logger._target_.lower() and qualitative_log is False:
-        #     # import pdb; pdb.set_trace()
         #     wandb.log({"data_video": wandb.Video(
         #         np.transpose((data['agentview_rgb'][:,0,...].cpu().numpy()* 255).astype(np.uint8),(0, 2, 3, 1)),
         #         fps=10),
@@ -802,49 +800,48 @@ def validate_wm(
         #         # imageio.mimsave(output_path, video, fps=fps)
         #         #    "predicted_video": wandb.Video(reconstructed_obs['agentview_rgb'][:,0,...].cpu().detach().numpy(), duration=5)
         #         })
-        #     # import pdb; pdb.set_trace()
         #     qualitative_log = True
         # torch.nn.functional.sigmoid(reconstructed_obs['agentview_rgb'])
         observation_error = torch.dist(reconstructed_obs['agentview_rgb'], batch_obs['agentview_rgb'], p=2)
 
-        concept_probs = cem_data['concept_probs'] #[...,::2] # only take the positive concept probs
-        target_concepts = cem_data['target_concepts']
+        if cfg.algo.world_model.cbm_model.use_cbm:
+            concept_probs = cem_data['concept_probs'] #[...,::2] # only take the positive concept probs
+            target_concepts = cem_data['target_concepts']
 
-        # Binarize predictions (multi-hot)
-        predicted = (concept_probs >= 0.5).float()
+            # Binarize predictions (multi-hot)
+            predicted = (concept_probs >= 0.5).float()
 
-        # import pdb; pdb.set_trace()
-        # True Positives (TP), False Positives (FP), False Negatives (FN)
-        TP = (predicted * target_concepts).sum(dim=(0, 1))  # Sum over batch and sequence dimension
-        FP = ((predicted == 1) & (target_concepts == 0)).sum(dim=(0, 1))
-        FN = ((predicted == 0) & (target_concepts == 1)).sum(dim=(0, 1))
-        TN = ((predicted == 0) & (target_concepts == 0)).sum(dim=(0, 1))
+            # True Positives (TP), False Positives (FP), False Negatives (FN)
+            TP = (predicted * target_concepts).sum(dim=(0, 1))  # Sum over batch and sequence dimension
+            FP = ((predicted == 1) & (target_concepts == 0)).sum(dim=(0, 1))
+            FN = ((predicted == 0) & (target_concepts == 1)).sum(dim=(0, 1))
+            TN = ((predicted == 0) & (target_concepts == 0)).sum(dim=(0, 1))
 
-        eps=1e-10
-        concept_precision = TP / (TP + FP + eps)
-        concept_recall = TP / (TP + FN + eps)
-        concept_accuracy = (TP + TN) / (TP + TN + FP + FN + eps)
-        concept_f1_score = 2 * (concept_precision * concept_recall) / (concept_precision + concept_recall + eps)
+            eps=1e-10
+            concept_precision = TP / (TP + FP + eps)
+            concept_recall = TP / (TP + FN + eps)
+            concept_accuracy = (TP + TN) / (TP + TN + FP + FN + eps)
+            concept_f1_score = 2 * (concept_precision * concept_recall) / (concept_precision + concept_recall + eps)
 
-        # Class-wise metrics (for each class separately)
-        # concept_metrics['precision'].append(concept_precision.cpu().numpy())
-        # concept_metrics['recall'].append(concept_recall.cpu().numpy())
-        # concept_metrics['accuracy'].append(concept_accuracy.cpu().numpy())
-        # concept_metrics['f1_score'].append(concept_f1_score.cpu().numpy())
+            ## Class-wise metrics (for each class separately)
+            # concept_metrics['precision'].append(concept_precision.cpu().numpy())
+            # concept_metrics['recall'].append(concept_recall.cpu().numpy())
+            # concept_metrics['accuracy'].append(concept_accuracy.cpu().numpy())
+            # concept_metrics['f1_score'].append(concept_f1_score.cpu().numpy())
 
-        ## If accumulating the metrics is too much data:  # TODO update: i think it is, program keeps hanging
-        # def online_mean(new_array, current_mean, count):
-        #     # Update the mean incrementally using the online formula
-        #     updated_mean = current_mean + (new_array - current_mean) / (count + 1)
-        #     return updated_mean
+            ## If accumulating the metrics is too much data:  # TODO update: i think it is, program keeps hanging
+            # def online_mean(new_array, current_mean, count):
+            #     # Update the mean incrementally using the online formula
+            #     updated_mean = current_mean + (new_array - current_mean) / (count + 1)
+            #     return updated_mean
 
-        # Averaged metrics (over all classes)
-        concept_mean_metrics = {
-            'precision': concept_precision.mean(),
-            'recall': concept_recall.mean(),
-            'accuracy': concept_accuracy.mean(),
-            'f1_score': concept_f1_score.mean()
-        }
+            # Averaged metrics (over all classes)
+            concept_mean_metrics = {
+                'precision': concept_precision.mean(),
+                'recall': concept_recall.mean(),
+                'accuracy': concept_accuracy.mean(),
+                'f1_score': concept_f1_score.mean()
+            }
 
         # # Compute the distribution over the reconstructed observations
         # po = {
@@ -899,37 +896,27 @@ def validate_wm(
 
         # Aggregate metrics
         if aggregator and not aggregator.disabled:
-            aggregator.update("Val/concept_precision", concept_mean_metrics['precision'])
-            aggregator.update("Val/concept_recall", concept_mean_metrics['recall'])
-            aggregator.update("Val/concept_f1_score", concept_mean_metrics['f1_score'])
-            aggregator.update("Val/concept_accuracy", concept_mean_metrics['accuracy'])
-            aggregator.update("Val/observation_error", observation_error)
+            if cfg.algo.world_model.cbm_model.use_cbm:
+                aggregator.update("Val/concept_precision", concept_mean_metrics['precision'])
+                aggregator.update("Val/concept_recall", concept_mean_metrics['recall'])
+                aggregator.update("Val/concept_f1_score", concept_mean_metrics['f1_score'])
+                aggregator.update("Val/concept_accuracy", concept_mean_metrics['accuracy'])
+                aggregator.update("Val/observation_error", observation_error)
+                # aggregator.update("Val/concept_loss", loss_dict['concept_loss'].detach())
+                # aggregator.update("Val/orthognality_loss", loss_dict['concept_loss'].detach())
+                # aggregator.update("Val/per_concept_loss", loss_dict['loss_per_concept'].detach())
 
             # aggregator.update("Val/world_model_loss", rec_loss.detach())
             # aggregator.update("Val/observation_loss", observation_loss.detach())
             # aggregator.update("Val/reward_loss", reward_loss.detach())
             # aggregator.update("Val/state_loss", state_loss.detach())
             # aggregator.update("Val/continue_loss", continue_loss.detach())
-            # aggregator.update("Val/concept_loss", loss_dict['concept_loss'].detach())
-            # aggregator.update("Val/orthognality_loss", loss_dict['concept_loss'].detach())
-            # aggregator.update("Val/per_concept_loss", loss_dict['loss_per_concept'].detach())
 
-        # if val_idx > 100:
-        #     print('hit0')
-        #     # TODO why is there a long delay between hit0 and hit1?
-        #     break
-        # if val_idx % 25 == 0 and val_idx > 0:
-        #     print(f"Val/{val_idx}: {concept_mean_metrics}")
-
-    # print('hit1')
-    # print("get_num_threads: " ,torch.get_num_threads())
-    # print("get_num_interop_threads: " ,torch.get_num_interop_threads())
-    # import pdb; pdb.set_trace()
-    for key, concept_val in concept_mean_metrics.items():  # concept_metrics.items():
-        # concept_metrics[key] = concept_metrics[key].detach().numpy()
-        # tqdm.write(f"Val/{key}: {np.stack(concept_val, axis=0).mean(axis=0)}")
-        tqdm.write(f"Val/{key}: {concept_val}")
-    # print('hit2')
+    if cfg.algo.world_model.cbm_model.use_cbm:
+        for key, concept_val in concept_mean_metrics.items():  # concept_metrics.items():
+            # concept_metrics[key] = concept_metrics[key].detach().numpy()
+            # tqdm.write(f"Val/{key}: {np.stack(concept_val, axis=0).mean(axis=0)}")
+            tqdm.write(f"Val/{key}: {concept_val}")
 
 
 @register_algorithm()
@@ -1186,7 +1173,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                                 axis=-1,
                             )
                     else:
-                        import pdb; pdb.set_trace() # TODO what does prepare_obs do?
+                        # import pdb; pdb.set_trace() # TODO what does prepare_obs do?
                         torch_obs = prepare_obs(fabric, obs, cnn_keys=cfg.algo.cnn_keys.encoder, num_envs=cfg.env.num_envs)
                         mask = {k: v for k, v in torch_obs.items() if k.startswith("mask")}
                         if len(mask) == 0:
@@ -1503,8 +1490,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                     )
             observation_space = gym.spaces.Dict(obs_space_dict)
         ## NOTE: all Libero90 datapoints are concatonated sequences of 64 frames.
-        # import pdb; pdb.set_trace()
-
 
         # Split into train and validation
         generator1 = torch.Generator().manual_seed(cfg.seed)
@@ -1549,7 +1534,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             dataset=val_split,
             transform_dict=val_transforms_dict
             )
-        # import pdb; pdb.set_trace()
         val_dataloader = DataLoader(
             val_dataset,
             batch_size=cfg.algo.per_rank_batch_size,
@@ -1735,7 +1719,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
         init_batch = next(init_dl)
         del init_dl
 
-        # import pdb; pdb.set_trace()
         is_first_dummy_tensor = torch.cat((
             torch.ones((1,init_batch['terminated'].shape[0])),
             torch.zeros((init_batch['terminated'].shape[1]-1,init_batch['terminated'].shape[0]))
@@ -1744,10 +1727,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             2,
             is_first_dummy_tensor.shape[0]//2,
             *is_first_dummy_tensor.shape[1:]).permute(0,2,1,).unsqueeze(-1).to(device)
-
-        #             torch.ones_like(batch['dones'].shape[0]),
-        #             torch.zeros_like(batch['dones'].shape[0])
-        # for iter_num in range(start_iter, total_iters + 1):
 
         cfg.buffer.checkpoint = False  #only when offline learning TODO probably should be an assert
 
@@ -1763,7 +1742,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                 profiler = Profiler()
                 profiler.start()
 
-            # import pdb; pdb.set_trace()
             for train_idx, batch in tqdm(enumerate(train_dataloader), unit="batch", total=len(train_dataloader)):
                 # print(f"iter_num={iter_num}")
 
@@ -1875,7 +1853,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                     last_train = train_step
 
                 ## Checkpoint Model Phase
-                # import pdb; pdb.set_trace()
                 # print(f"policy_step={policy_step}, last_checkpoint={last_checkpoint}, iter_num={iter_num}")
                 # print(f" checkpoint? {policy_step - last_checkpoint >= cfg.checkpoint.every}")
                 if (cfg.checkpoint.every > 0 and policy_step - last_checkpoint >= cfg.checkpoint.every) or (
