@@ -61,6 +61,7 @@ wrapper:
   use_vector_obs: False
   control_freq: 20
   action_repeat: ${env.action_repeat}
+  supervised_concepts: False
 
 # env_name:
 # [0] 'Door'

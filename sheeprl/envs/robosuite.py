@@ -35,7 +35,8 @@ class RobosuiteWrapper(gym.Wrapper):
         control_freq: int = 20,
         keys: None = None,
         channels_first: bool = True,
-        action_repeat: int = 1
+        action_repeat: int = 1,
+        supervised_concepts: bool =True
         ):
         """Robosuite wrapper
         Args:
@@ -70,6 +71,7 @@ class RobosuiteWrapper(gym.Wrapper):
         self.use_vector_obs = use_vector_obs
         self.control_freq = control_freq
         self.action_repeat = action_repeat
+        self.supervised_concepts = supervised_concepts
 
         libero_args=dict(
             env_configuration=self.env_config,
@@ -97,10 +99,9 @@ class RobosuiteWrapper(gym.Wrapper):
                 bddl_file_name=bddl_file,
                 **libero_args,
             )
-            # import pdb; pdb.set_trace()
-            self.concepts = np.array(get_bddl_concepts(self.bddl_file))
+            if supervised_concepts:
+                self.concepts = np.array(get_bddl_concepts(self.bddl_file))
         else:
-            # import pdb; pdb.set_trace()
             env = suite.make(**libero_args,
                              **extra_robosuite_make_args)
 
@@ -305,10 +306,7 @@ class RobosuiteWrapper(gym.Wrapper):
         reward = time_step[1]
         if time_step[2]:
             reward = reward * self.ep_length
-        # try:
         self.step_returns['extrinsic'][self.ep_length] = reward
-        # except Exception as e:
-        #     import pdb; pdb.set_trace()
         # if self.reward_shaping and self.bddl_file:
         #     reward += self.staged_rewards()
         terminated = time_step[2]
@@ -319,7 +317,8 @@ class RobosuiteWrapper(gym.Wrapper):
         infos["internal_state"] = time_step[0]
 
         if self.bddl_file:
-            infos["concepts"] = self.concepts
+            if self.supervised_concepts:
+                infos["concepts"] = self.concepts
 
         if self.reward_shaping and self.bddl_file:
             r_reach, r_grasp, r_lift, r_hover = self.staged_rewards()
@@ -331,10 +330,7 @@ class RobosuiteWrapper(gym.Wrapper):
                 'hover': r_hover
             }
             for key in staged_rewards.keys():
-                # try:
                 self.step_returns['intrinsic'][key][self.ep_length] = staged_rewards[key]
-                # except Exception as e:
-                #     import pdb; pdb.set_trace()
 
         self.ep_length += 1
 
@@ -350,7 +346,6 @@ class RobosuiteWrapper(gym.Wrapper):
         # self.ep_returns = []  # np.zeros(self.num_envs, dtype=np.float32)
 
         # Accumulate stats
-        # import pdb; pdb.set_trace()
         if (self.step_returns['extrinsic'] > -1).any():
             self.ep_stats['extrinsic'].append(
                 self.step_returns['extrinsic'][self.step_returns['extrinsic'] > -1].mean())

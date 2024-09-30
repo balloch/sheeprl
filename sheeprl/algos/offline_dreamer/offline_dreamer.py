@@ -1141,7 +1141,8 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
         step_data["truncated"] = np.zeros((1, cfg.env.num_envs, 1))
         step_data["terminated"] = np.zeros((1, cfg.env.num_envs, 1))
         step_data["is_first"] = np.ones_like(step_data["terminated"])
-        if cfg.algo.world_model.cbm_model.n_concepts:
+        # if cfg.algo.world_model.cbm_model.n_concepts:
+        if cfg.algo.world_model.cbm_model.use_cbm:
             step_data["targets"] = np.zeros((1, cfg.env.num_envs, cfg.algo.world_model.cbm_model.n_concepts))
         player.init_states()
 
@@ -1233,7 +1234,8 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                 for k in obs_keys:
                     step_data[k] = next_obs[k][np.newaxis]
 
-                if "concepts" in infos:
+                if cfg.algo.world_model.cbm_model.use_cbm:  #   "concepts" in infos:
+                    # import pdb; pdb.set_trace()
                     step_data["targets"] = np.expand_dims(np.stack(infos["concepts"]),0)
 
                 # next_obs becomes the new obs
@@ -1455,7 +1457,8 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
         if cfg.checkpoint.resume_from:
             ratio.load_state_dict(state["ratio"])
 
-        if cfg.algo.supervised_concepts:
+        import pdb; pdb.set_trace()
+        if cfg.env.supervised_concepts:
             temp_datas = []
             for dataset, task_concept in zip(datasets, task_concepts):
                 temp_datas.append(CombinedDictDataset(dataset, task_concept))
