@@ -1235,7 +1235,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                     step_data[k] = next_obs[k][np.newaxis]
 
                 if cfg.algo.world_model.cbm_model.use_cbm:  #   "concepts" in infos:
-                    # import pdb; pdb.set_trace()
                     step_data["targets"] = np.expand_dims(np.stack(infos["concepts"]),0)
 
                 # next_obs becomes the new obs
@@ -1457,7 +1456,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
         if cfg.checkpoint.resume_from:
             ratio.load_state_dict(state["ratio"])
 
-        import pdb; pdb.set_trace()
         if cfg.env.supervised_concepts:
             temp_datas = []
             for dataset, task_concept in zip(datasets, task_concepts):
