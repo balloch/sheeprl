@@ -3,8 +3,10 @@ from sklearn.metrics.pairwise import cosine_similarity
 import torch
 from torchvision.transforms import v2
 
+from torch.utils.data import DataLoader, ConcatDataset,
+
 from sheeprl.algos.offline_dreamer.agent import WorldModel, CBWM, build_agent
-from sheeprl.algos.offline_dreamer.offline_dreamer import validate_wm, dynamic_learning, get_datasets_from_benchmark
+from sheeprl.algos.offline_dreamer.offline_dreamer import validate_wm, dynamic_learning, get_datasets_from_benchmark, CombinedDictDataset, TransformedDictDataset
 
 
 # constants
@@ -46,6 +48,16 @@ def calculate_mean_emb(pos_emb_array, TP_hits):
         if pos_emb.shape[0] > 0:
             mean_emb_dict[i] = np.mean(pos_emb, axis=0)
     return mean_emb_dict
+
+
+### MISSING VARIABLES ###
+fabric
+benchmark
+libero_folder
+obs_modality
+is_continuous
+actions_dim
+observation_space
 
 def main(cfg, model1, model2, env_path, mode):
     if mode == 'collect':
