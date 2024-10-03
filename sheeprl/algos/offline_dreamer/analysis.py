@@ -1,13 +1,25 @@
+from functools import partial
+
+import gym
 import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
 import torch
+from libero.libero import get_libero_path
+from libero.libero.benchmark import get_benchmark
+from lightning import Fabric
+from sklearn.metrics.pairwise import cosine_similarity
+from torch.utils.data import ConcatDataset, DataLoader
 from torchvision.transforms import v2
 
-from torch.utils.data import DataLoader, ConcatDataset,
-
-from sheeprl.algos.offline_dreamer.agent import WorldModel, CBWM, build_agent
-from sheeprl.algos.offline_dreamer.offline_dreamer import validate_wm, dynamic_learning, get_datasets_from_benchmark, CombinedDictDataset, TransformedDictDataset
-
+from sheeprl.algos.offline_dreamer.agent import CBWM, WorldModel, build_agent
+from sheeprl.algos.offline_dreamer.offline_dreamer import (
+    CombinedDictDataset,
+    TransformedDictDataset,
+    dynamic_learning,
+    get_datasets_from_benchmark,
+    validate_wm,
+)
+from sheeprl.envs.wrappers import RestartOnException
+from sheeprl.utils.env import make_env
 
 # constants
 CONCEPT_DICT = {
@@ -28,7 +40,7 @@ CONCEPT_DICT = {
     14: 'basket',
     15: 'milk',
     16: 'white_bowl',
-    17: 'wooden_tray':,
+    17: 'wooden_tray',
     18: 'akita_black_bowl',
     19: 'alphabet_soup',
     20: 'black_book',
@@ -50,21 +62,19 @@ def calculate_mean_emb(pos_emb_array, TP_hits):
     return mean_emb_dict
 
 
-### MISSING VARIABLES ###
-fabric
-benchmark
-libero_folder
-obs_modality
-is_continuous
-actions_dim
-observation_space
-
 def main(cfg, model1, model2, env_path, mode):
+    # Setup Fabric
+    strategy = cfg.fabric.get("strategy", "auto")
+    fabric: Fabric = hydra.utils.instantiate(cfg.fabric, strategy=strategy, _convert_="all")
+
     if mode == 'collect':
-        # create models
-        state1 = fabric.load(pathlib.Path(model1))
-        state2 = fabric.load(pathlib.Path(model2))
+        # create dataset
         compiled_dynamic_learning = torch.compile(dynamic_learning, **cfg.algo.compile_dynamic_learning)
+        libero_folder = get_libero_path("datasets")
+        obs_modality = {'rgb': ['agentview_rgb']}
+        task_order = 0
+        benchmark_name = "libero_90" 
+        benchmark = get_benchmark(benchmark_name)(task_order)
         datasets, descriptions, task_concepts = get_datasets_from_benchmark(
             benchmark=benchmark,
             libero_folder=libero_folder,
@@ -103,6 +113,37 @@ def main(cfg, model1, model2, env_path, mode):
             pin_memory=False,
             drop_last=True,
             )
+
+        # create environment
+        rank = fabric.global_rank
+        vectorized_env = gym.vector.SyncVectorEnv if cfg.env.sync_env else gym.vector.AsyncVectorEnv
+        envs = vectorized_env(
+            [
+                partial(
+                    RestartOnException,
+                    make_env(
+                        cfg,
+                        cfg.seed + rank * cfg.env.num_envs + i,
+                        rank * cfg.env.num_envs,
+                        None,
+                        "train",
+                        vector_env_idx=i,
+                    ),
+                )
+                for i in range(cfg.env.num_envs)
+            ]
+        )
+        action_space = envs.single_action_space
+        observation_space = envs.single_observation_space
+        is_continuous = isinstance(action_space, gym.spaces.Box)
+        is_multidiscrete = isinstance(action_space, gym.spaces.MultiDiscrete)
+        actions_dim = tuple(
+            action_space.shape if is_continuous else (action_space.nvec.tolist() if is_multidiscrete else [action_space.n])
+        )
+
+        # create models
+        state1 = fabric.load(pathlib.Path(model1))
+        state2 = fabric.load(pathlib.Path(model2))
         world_model1, actor1, critic1, target_critic1, player1 = build_agent(
             fabric,
             actions_dim,
