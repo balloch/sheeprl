@@ -118,8 +118,8 @@ def dynamic_learning(
     if isinstance(world_model, CBWM):
         # print("DYNAMIC LEARNING!!!!!!!!!")
         random_latent = world_model.cem.sample_latent(list(latent_states.size()))
-        latent_states, concept_logits, concept_probs, real_concept_latent, real_non_concept_latent = world_model.cem(latent_states)
-        _, _, _, rand_concept_latent, rand_non_concept_latent = world_model.cem(random_latent)
+        latent_states, concept_logits, concept_probs, real_concept_latent, real_non_concept_latent, real_pos_concept_latent = world_model.cem(latent_states)
+        _, _, _, rand_concept_latent, rand_non_concept_latent, _ = world_model.cem(random_latent)
         if data.get("targets") is not None:
             target_concepts = data["targets"]
         else:
@@ -129,6 +129,7 @@ def dynamic_learning(
                     "concept_probs":concept_probs,
                     "real_concept_latent":real_concept_latent,  # This is the stuff we are comparing
                     "real_non_concept_latent":real_non_concept_latent,
+                    "real_pos_concept_latent":real_pos_concept_latent,
                     "rand_concept_latent":rand_concept_latent,
                     "rand_non_concept_latent":rand_non_concept_latent}
     return latent_states, priors_logits, posteriors_logits, posteriors, recurrent_states, cem_data
@@ -152,7 +153,7 @@ def behaviour_learning(
     imagined_latent_state = torch.cat((imagined_prior, recurrent_state), -1)
     if isinstance(world_model, CBWM):
         # print("BEHAVIOR LEARNING!!!!!!!!!")
-        imagined_latent_state, _, _, _ = world_model.cem(imagined_latent_state)
+        imagined_latent_state, _, _, _, _, _ = world_model.cem(imagined_latent_state)
 
     imagined_trajectories = torch.empty(
         horizon + 1,
@@ -189,7 +190,7 @@ def behaviour_learning(
         imagined_prior = imagined_prior.view(1, -1, stoch_state_size)
         imagined_latent_state = torch.cat((imagined_prior, recurrent_state), -1)
         if isinstance(world_model, CBWM):
-            imagined_latent_state, _, _, _ = world_model.cem(imagined_latent_state)
+            imagined_latent_state, _, _, _, _, _ = world_model.cem(imagined_latent_state)
 
         imagined_trajectories[i] = imagined_latent_state
         actions_list, _ = actor(imagined_latent_state.detach())
@@ -696,6 +697,7 @@ def validate_wm(
     cfg: Dict[str, Any],
     compiled_dynamic_learning: Callable,
     save_obs: bool = False,
+    save_embeddings: bool = False,
     val_aggregator: MetricAggregator | None = None,
 ) -> None:
     """Runs one-step update of the agent.
@@ -743,6 +745,9 @@ def validate_wm(
         is_first_dummy_tensor.shape[0]//2,
         *is_first_dummy_tensor.shape[1:]).permute(0,2,1,).unsqueeze(-1).to(device)
 
+    target_list = []
+    pos_emb_list = []
+    predicted_list = []
 
     for val_idx, data in enumerate(dataloader):
         # import pdb; pdb.set_trace()
@@ -818,6 +823,12 @@ def validate_wm(
 
         # Binarize predictions (multi-hot)
         predicted = (concept_probs >= 0.5).float()
+
+        # get concept embeddings
+        if save_embeddings:
+            target_list.append(target_concepts)
+            pos_emb_list.append(cem_data['real_pos_concept_latent'])
+            predicted_list.append(predicted)
 
         # True Positives (TP), False Positives (FP), False Negatives (FN)
         TP = (predicted * target_concepts).sum(dim=(0, 1)).detach()  # Sum over batch and sequence dimension
@@ -918,7 +929,7 @@ def validate_wm(
             # aggregator.update("Val/concept_loss", loss_dict['concept_loss'].detach())
             # aggregator.update("Val/orthognality_loss", loss_dict['concept_loss'].detach())
             # aggregator.update("Val/per_concept_loss", loss_dict['loss_per_concept'].detach())
-        if val_idx > 100:
+        if val_idx > 1:
             print('hit0')
             # TODO why is there a long delay between hit0 and hit1?
             break
@@ -930,6 +941,13 @@ def validate_wm(
     #     print(f"Val/{key}: {np.stack(concept_val, axis=0).mean(axis=0)}")
     print('hit2')
 
+    if save_embeddings:
+        pos_emb_array = torch.stack(pos_emb_list).cpu().detach().numpy()
+        target_array = torch.stack(target_list).cpu().detach().numpy()
+        predicted_array = torch.stack(predicted_list).cpu().detach().numpy()
+        TP_hits = (predicted_array * target_array).astype(int) > 0
+        np.save("concept_embeddings.npy", pos_emb_array)
+        np.save("tp_indices.npy", pos_emb_array)
 
 @register_algorithm()
 def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = None) -> None:
@@ -1522,8 +1540,8 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                 # v2.ToTensor(),
                 # v2.ToDtype(torch.float32, scale=True),
                 v2.Resize((cfg.env.screen_size, cfg.env.screen_size)),
-                v2.Pad(4,padding_mode=cfg.train_transforms.Pad.pad_type),
-                v2.RandomCrop(cfg.env.screen_size),
+                # v2.Pad(4,padding_mode=cfg.train_transforms.Pad.pad_type),
+                # v2.RandomCrop(cfg.env.screen_size),
                 # v2.ToTensor(),
             ]) }
         train_dataset = TransformedDictDataset(
@@ -1535,8 +1553,8 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             train_dataset,
             batch_size=cfg.algo.per_rank_batch_size * 2, # replay_ratio=0.5 This is hacky, but Ratio is confusing
             shuffle=True,
-            num_workers=4,
-            pin_memory=True,
+            num_workers=0,
+            pin_memory=False,
             drop_last=True,
             )
         val_transforms_dict = {
@@ -1555,8 +1573,8 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             val_dataset,
             batch_size=cfg.algo.per_rank_batch_size, # replay_ratio=0.5 This is hacky, but Ratio is confusing
             shuffle=True,
-            num_workers=4,
-            pin_memory=True,
+            num_workers=0,
+            pin_memory=False,
             drop_last=True,
             )
 
@@ -1824,7 +1842,8 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                         train_step += world_size
 
                 ## Log metrics Phase
-                if cfg.metric.log_level > 0 and (policy_step - last_log >= cfg.metric.log_every or iter_num == total_iters):
+                if True:
+                    print("VALIDATE")
                     print(f"policy_step={policy_step}, last_log={last_log}")
 
                     # Validate on validation set
