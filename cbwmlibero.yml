@@ -230,6 +230,7 @@ dependencies:
       - proglog==0.1.10
       - protobuf==4.25.3
       - pygame==2.5.2
+      - pyinstrument
       - pynput==1.7.7
       - pyopengl==3.1.7
       - pyparsing==3.1.2
