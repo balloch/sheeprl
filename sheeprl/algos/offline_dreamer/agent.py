@@ -188,6 +188,7 @@ class CNNDecoder(nn.Module):
         layer_norm_cls: Callable[..., nn.Module] = LayerNormChannelLast,
         layer_norm_kw: Dict[str, Any] = {"eps": 1e-3},
         stages: int = 4,
+        final_sigmoid=False,
     ) -> None:
         super().__init__()
         self.keys = keys
@@ -195,7 +196,7 @@ class CNNDecoder(nn.Module):
         self.cnn_encoder_output_dim = cnn_encoder_output_dim
         self.image_size = image_size
         self.output_dim = (sum(output_channels), *image_size)
-        self.model = nn.Sequential(
+        layers_list = [
             nn.Linear(latent_state_size, cnn_encoder_output_dim),
             nn.Unflatten(1, (-1, 4, 4)),
             DeCNN(
@@ -218,7 +219,10 @@ class CNNDecoder(nn.Module):
                 ]
                 + [None],
             ),
-        )
+        ]
+        if final_sigmoid:
+            layers_list.append(nn.Sigmoid())
+        self.model = nn.Sequential(*layers_list)
 
     def forward(self, latent_states: Tensor) -> Dict[str, Tensor]:
         cnn_out = cnn_forward(self.model, latent_states, (latent_states.shape[-1],), self.output_dim)
@@ -689,7 +693,7 @@ class PlayerODV3(nn.Module):
         )
         latent = torch.cat((self.stochastic_state, self.recurrent_state), -1)
         if self.cem is not None:
-            latent, _, _, _ = self.cem(latent)
+            latent, _, _, _, _ = self.cem(latent)
         actions, _ = self.actor(latent, greedy, mask)
         self.actions = torch.cat(actions, -1)
         return actions
@@ -966,7 +970,6 @@ class CEM(nn.Module):
                         self.concept_bins[c])
                      ]))
 
-
         self.concept_context_generators.append(
         torch.nn.Sequential(*[
             torch.nn.Linear(self.input_size,self.emb_size),
@@ -1202,6 +1205,7 @@ def build_agent(
             layer_norm_cls=hydra.utils.get_class(world_model_cfg.observation_model.cnn_layer_norm.cls),
             layer_norm_kw=world_model_cfg.observation_model.mlp_layer_norm.kw,
             stages=cnn_stages,
+            final_sigmoid=world_model_cfg.observation_model.final_sigmoid,
         )
         if cfg.algo.cnn_keys.decoder is not None and len(cfg.algo.cnn_keys.decoder) > 0
         else None

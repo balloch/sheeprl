@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional, SupportsFloat, Tuple, Union
 import os
+import warnings
 
 import gymnasium as gym
 import numpy as np
@@ -36,7 +37,7 @@ class RobosuiteWrapper(gym.Wrapper):
         keys: None = None,
         channels_first: bool = True,
         action_repeat: int = 1,
-        supervised_concepts: bool =True
+        supervised_concepts: Union[list,None] = None
         ):
         """Robosuite wrapper
         Args:
@@ -99,8 +100,6 @@ class RobosuiteWrapper(gym.Wrapper):
                 bddl_file_name=bddl_file,
                 **libero_args,
             )
-            if supervised_concepts:
-                self.concepts = np.array(get_bddl_concepts(self.bddl_file))
         else:
             env = suite.make(**libero_args,
                              **extra_robosuite_make_args)
@@ -108,6 +107,11 @@ class RobosuiteWrapper(gym.Wrapper):
         super().__init__(env)
 
         obs = self.env.reset()
+
+        # initialize self._last_concepts
+        self._last_concepts = None
+        if self.supervised_concepts:
+            self.update_concepts(obs)
 
         # We need this to be here because we want the environment to exist at this point
         if self.reward_shaping and self.bddl_file:
@@ -316,9 +320,10 @@ class RobosuiteWrapper(gym.Wrapper):
         infos["discount"] = .997  # TODO: I don't know if thats correct
         infos["internal_state"] = time_step[0]
 
-        if self.bddl_file:
-            if self.supervised_concepts:
-                infos["concepts"] = self.concepts
+        if self.supervised_concepts:
+            self.update_concepts(obs)
+            infos["concepts"] = self.get_concepts()
+            # import pdb; pdb.set_trace()
 
         if self.reward_shaping and self.bddl_file:
             r_reach, r_grasp, r_lift, r_hover = self.staged_rewards()
@@ -371,6 +376,7 @@ class RobosuiteWrapper(gym.Wrapper):
             self.ep_length = 0
 
         orig_obs = self.env.reset()
+        infos = {}
         if self.initial_joint_positions:
             self.env.robots[0].set_robot_joint_positions(self.initial_joint_positions)
             # Resample without stepping
@@ -386,7 +392,12 @@ class RobosuiteWrapper(gym.Wrapper):
         self.current_state = orig_obs
         # self.current_state = _flatten_obs(time_step.observation)
         obs = self._get_obs(orig_obs)
-        return obs, {}
+        if self.supervised_concepts:
+            self.update_concepts(obs)
+            infos["concepts"] = self.get_concepts()
+            # import pdb; pdb.set_trace()
+
+        return obs, infos
         # return obs, (), False, False, {}
 
     def get_env_stats(self, stats_dict = None, reset: bool = False) -> Dict[str, Any]:
@@ -427,6 +438,35 @@ class RobosuiteWrapper(gym.Wrapper):
                 }
             }
         return tracked_stats
+
+    def update_concepts(self, obs=None):
+        # import pdb; pdb.set_trace()
+        if self._last_concepts is None:
+            self._last_concepts = []
+            if 'bddl_objects' in self.supervised_concepts:
+                if not self.bddl_file:
+                    raise ValueError("bddl_objects requested but no bddl_file provided")
+                self._last_concepts.extend(get_bddl_concepts(self.bddl_file))
+            if 'joint_positions' in self.supervised_concepts:
+                if obs is None or 'state' not in obs:
+                    raise ValueError("obs with 'state' required for joint concepts")
+                else:
+                    self._last_concepts.extend(obs['state'])
+                    warnings.warn("joint_positions not tested")
+            self._last_concepts = np.array(self._last_concepts)
+        else:
+            if 'joint_positions' in self.supervised_concepts:
+                if obs is None or 'state' not in obs:
+                    raise ValueError("obs with 'state' required for joint concepts")
+                else:
+                    joint_start = len(self._last_concepts)-len(obs['state'])
+                    self._last_concepts[joint_start:]=obs['state']
+                    warnings.warn("joint_positions not tested")
+
+    def get_concepts(self,obs=None):
+        if self._last_concepts is None:
+            self.update_concepts(obs)
+        return self._last_concepts
 
     def _update_initial_distances(self):
         env : gym.Env = self.env
@@ -542,7 +582,7 @@ class RobosuiteWrapper(gym.Wrapper):
         self.max_lift_ep = max(self.max_lift_ep, r_lift)
 
         r_hover = 0.0
-        if self.max_lift_ep > 0.03:
+        if self.max_lift_ep > 0.02:
             # Hover reward
             r_hover = ((1.75 - 1.75  * target_to_goal_dist)**2) * hover_mult
 

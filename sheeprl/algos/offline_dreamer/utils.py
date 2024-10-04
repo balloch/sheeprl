@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, Sequence
+import os
 
+import imageio
 import gymnasium as gym
 import numpy as np
 import torch
@@ -48,6 +50,9 @@ AGGREGATOR_KEYS = {
     "Rewards/lift_max_ep",
     "Rewards/hover_avg_ep",
     "Rewards/hover_max_ep",
+    # "trainer/wm_train_iter",
+    # "trainer/policy_train_iter",
+    # "trainer/env_steps",
     "Val/world_model_loss",
     "Val/observation_loss",
     "Val/observation_error",
@@ -274,3 +279,91 @@ def log_models_from_checkpoint(
         model_info["moments"] = mlflow.pytorch.log_model(moments, artifact_path="moments")
         mlflow.log_dict(cfg.to_log, "config.json")
     return model_info
+
+def render_vid(
+    fabric,
+    orig_obs,
+    reconstructed_obs,
+    cfg,
+    orig_obs_prepared=False,
+    recon_obs_prepared=False,
+    obs_key='obs',
+    log_dir=None,
+    logger=None,
+    train_iter=None,
+    ):
+    """
+    Render a video of the original and reconstructed observations.
+
+    Args:
+        fabric (Fabric): the fabric instance.
+        orig_obs (Tensor): the original observations.
+        reconstructed_obs (Tensor): the reconstructed observations.
+        cfg (DictConfig): the hyper-parameters.
+        obs_key (str): the observation key.
+            Default to "obs".
+        log_dir (str): the logging directory.
+            Default to None.
+        logger (Logger): the logger.
+            Default to None.
+        train_iter (int): the training iteration.
+            Default to None.
+    """
+    assert logger or log_dir, "Either logger or log_dir must be provided"
+
+    obs_video = orig_obs.permute(0,1,3,4,2)[:,cfg.seed,...]
+    recon_video = reconstructed_obs.permute(0,1,3,4,2)[:,cfg.seed,...]
+    if not cfg.algo.world_model.observation_model.final_sigmoid:
+        obs_video = obs_video + 0.5
+        recon_video = recon_video + 0.5
+        recon_video[recon_video<0] = 0
+        recon_video[recon_video>1] = 1
+    obs_video = (obs_video * 255).cpu().numpy().astype(np.uint8)
+    recon_video = (recon_video * 255).cpu().numpy().astype(np.uint8)
+
+    os.makedirs(log_dir, exist_ok=True)
+    # os.chmod(log_dir, 0o777)
+
+    def increment_filename(directory, filename):
+        if filename[0] == '/':
+            filename = filename[1:]
+        name, ext = os.path.splitext(filename)
+        version = 0
+        new_filename = filename
+        while os.path.exists(os.path.join(directory, new_filename)):
+            # Create a new filename by appending the version number
+            version += 1
+            new_filename = f"{name}_{version}{ext}"
+        if filename == new_filename:
+            version = ''
+        return new_filename, version
+
+    filename, increment = increment_filename(log_dir, f'recon_{obs_key}_vid.mp4')
+
+    if cfg.validate.save_to_file:
+        with open(os.path.join(log_dir, filename), 'wb') as f:
+            imageio.v3.imwrite(
+                uri=f,
+                image=recon_video,
+                plugin='FFMPEG',
+                extension='.mp4',
+                )
+        with open(os.path.join(log_dir, f'orig_{obs_key}_vid'+str(increment)+'.mp4'), 'wb') as of:
+            imageio.v3.imwrite(
+                uri=of,
+                image=obs_video,
+                plugin='FFMPEG',
+                extension='.mp4',
+                )
+
+    # if "wandb" in cfg.metric.logger._target_.lower() and qualitative_log is False:
+    #     wandb.log({"data_video": wandb.Video(
+    #         np.transpose((data['agentview_rgb'][:,0,...].cpu().numpy()* 255).astype(np.uint8),(0, 2, 3, 1)),
+    #         fps=10),
+    #         # np.transpose(video, (0, 2, 3, 1))
+    #         # fps=10
+    #         # imageio.mimsave(output_path, video, fps=fps)
+    #         #    "predicted_video": wandb.Video(reconstructed_obs['agentview_rgb'][:,0,...].cpu().detach().numpy(), duration=5)
+    #         })
+    #     qualitative_log = True
+    # torch.nn.functional.sigmoid(reconstructed_obs['agentview_rgb'])

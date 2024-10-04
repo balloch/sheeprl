@@ -61,7 +61,7 @@ wrapper:
   use_vector_obs: False
   control_freq: 20
   action_repeat: ${env.action_repeat}
-  supervised_concepts: False
+  supervised_concepts: None #options: list of: 'bddl_objects' and/or 'joint_positions'
 
 # env_name:
 # [0] 'Door'
