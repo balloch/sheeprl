@@ -697,7 +697,7 @@ def validate_wm(
     cfg: Dict[str, Any],
     compiled_dynamic_learning: Callable,
     save_obs: bool = False,
-    save_embeddings: bool = False,
+    save_embeddings: str = '',
     val_aggregator: MetricAggregator | None = None,
 ) -> None:
     """Runs one-step update of the agent.
@@ -735,7 +735,6 @@ def validate_wm(
     qualitative_log = False
     init_batch = next(iter(dataloader))
 
-    # import pdb; pdb.set_trace()
     is_first_dummy_tensor = torch.cat((
         torch.ones((1,init_batch['terminated'].shape[0])),
         torch.zeros((init_batch['terminated'].shape[1]-1,init_batch['terminated'].shape[0]))
@@ -945,9 +944,41 @@ def validate_wm(
         pos_emb_array = torch.stack(pos_emb_list).cpu().detach().numpy()
         target_array = torch.stack(target_list).cpu().detach().numpy()
         predicted_array = torch.stack(predicted_list).cpu().detach().numpy()
-        TP_hits = (predicted_array * target_array).astype(int) > 0
-        np.save("concept_embeddings.npy", pos_emb_array)
-        np.save("tp_indices.npy", pos_emb_array)
+        TP_hits = (predicted_array * target_array)
+        np.save(f"{save_embeddings}_concept_embeddings.npy", pos_emb_array)
+        np.save(f"{save_embeddings}_tp_indices.npy", TP_hits)
+
+
+def collect_embeddings(
+    fabric,
+    model1,
+    model2,
+    dataloader,
+    actions_dim,
+    is_continuous,
+    cfg,
+    observation_space,
+    compiled_dynamic_learning,
+    env,
+    emb_save_root,
+):
+    with torch.inference_mode():
+        validate_wm(
+            fabric=fabric,
+            world_model=model1,
+            dataloader=dataloader,
+            cfg=cfg,
+            compiled_dynamic_learning=compiled_dynamic_learning,
+            save_embeddings=emb_save_root + '/model1',
+        )
+        validate_wm(
+            fabric=fabric,
+            world_model=model1,
+            dataloader=dataloader,
+            cfg=cfg,
+            compiled_dynamic_learning=compiled_dynamic_learning,
+            save_embeddings=emb_save_root + '/model2',
+        )
 
 @register_algorithm()
 def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = None) -> None:
@@ -1203,7 +1234,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                                 axis=-1,
                             )
                     else:
-                        import pdb; pdb.set_trace()
                         torch_obs = prepare_obs(fabric, obs, cnn_keys=cfg.algo.cnn_keys.encoder, num_envs=cfg.env.num_envs)
                         mask = {k: v for k, v in torch_obs.items() if k.startswith("mask")}
                         if len(mask) == 0:
@@ -1437,6 +1467,191 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                     )
 
         envs.close()
+    elif cfg.collect_embeddings:
+        state2 = fabric.load(pathlib.Path(cfg.checkpoint.pretrain_ckpt_path2))
+
+        ## Environment setup
+        vectorized_env = gym.vector.SyncVectorEnv if cfg.env.sync_env else gym.vector.AsyncVectorEnv
+        envs = vectorized_env(
+            [
+                partial(
+                    RestartOnException,
+                    make_env(
+                        cfg,
+                        cfg.seed + rank * cfg.env.num_envs + i,
+                        rank * cfg.env.num_envs,
+                        log_dir if rank == 0 else None,
+                        "train",
+                        vector_env_idx=i,
+                    ),
+                )
+                for i in range(cfg.env.num_envs)
+            ]
+        )
+
+        libero_folder = get_libero_path("datasets")
+        bddl_folder = get_libero_path("bddl_files")
+
+        task_order = 0  # Default task order
+        benchmark_name = "libero_90" # TODO add to config can be from {"libero_spatial", "libero_object", "libero_goal", "libero_10"}
+        benchmark = get_benchmark(benchmark_name)(task_order)
+        obs_modality = {'rgb': ['agentview_rgb']} #, 'low_dim': [ 'joint_states']}
+
+        datasets, descriptions, task_concepts = get_datasets_from_benchmark(
+            benchmark=benchmark,
+            libero_folder=libero_folder,
+            seq_len=cfg.algo.per_rank_sequence_length,
+            obs_modality=obs_modality
+            )
+        n_demos = [data.n_demos for data in datasets]
+        n_sequences = [data.total_num_sequences for data in datasets]
+
+        # Create Ratio class
+        ratio = Ratio(cfg.algo.replay_ratio, pretrain_steps=cfg.algo.per_rank_pretrain_steps)
+        if cfg.checkpoint.resume_from:
+            ratio.load_state_dict(state["ratio"])
+
+        if cfg.algo.supervised_concepts:
+            temp_datas = []
+            for dataset, task_concept in zip(datasets, task_concepts):
+                temp_datas.append(CombinedDictDataset(dataset, task_concept))
+            datasets = temp_datas
+        concat_dataset = ConcatDataset(datasets)
+        action_sample = concat_dataset[0]['actions']
+        if isinstance(action_sample, np.ndarray):
+            action_space = gym.spaces.Box(
+                low=-1.0, #np.min(action_sample),
+                high=1.0, #np.max(action_sample),
+                shape=action_sample[0].shape,
+                dtype=action_sample.dtype
+            )
+        obs_sample = concat_dataset[0]['obs']  # Assuming dataset[i][0] is the observation
+        if isinstance(obs_sample, dict):
+            obs_space_dict = {}
+            for k, v in obs_sample.items():
+                if 'image' in k or 'rgb' in k:
+                    obs_space_dict[k] = gym.spaces.Box(
+                        low=0,
+                        high=1.0,
+                        shape=(3, cfg.env.screen_size, cfg.env.screen_size),
+                        dtype=v.dtype
+                    )
+                else:
+                    obs_space_dict[k] = gym.spaces.Box(
+                        low=-1.0,
+                        high=1.0,
+                        shape=v[0].shape,
+                        dtype=v.dtype
+                    )
+            observation_space = gym.spaces.Dict(obs_space_dict)
+
+        eval_transforms_dict = {
+            'agentview_rgb': v2.Compose([
+                # v2.ToImage(),
+                v2.Resize((cfg.env.screen_size, cfg.env.screen_size)),
+                # v2.Pad(4,padding_mode=cfg.val_transforms.Pad.pad_type),
+                # v2.RandomCrop(cfg.env.screen_size),
+                # v2.ToTensor(),
+            ])}
+        eval_dataset = TransformedDictDataset(
+            dataset=concat_dataset,
+            transform_dict=eval_transforms_dict
+            )
+        eval_dataloader = DataLoader(
+            eval_dataset,
+            batch_size=cfg.algo.per_rank_batch_size, # replay_ratio=0.5 This is hacky, but Ratio is confusing
+            shuffle=False,
+            num_workers=0,
+            pin_memory=False,
+            drop_last=True,
+            )
+
+        is_continuous = isinstance(action_space, gym.spaces.Box)
+        is_multidiscrete = isinstance(action_space, gym.spaces.MultiDiscrete)
+        actions_dim = tuple(
+            action_space.shape if is_continuous else (action_space.nvec.tolist() if is_multidiscrete else [action_space.n])
+        )
+        clip_rewards_fn = lambda r: np.tanh(r) if cfg.env.clip_rewards else r
+        if not isinstance(observation_space, gym.spaces.Dict):
+            raise RuntimeError(f"Unexpected observation type, should be of type Dict, got: {observation_space}")
+
+        if (
+            len(set(cfg.algo.cnn_keys.encoder).intersection(set(cfg.algo.cnn_keys.decoder))) == 0
+            and len(set(cfg.algo.mlp_keys.encoder).intersection(set(cfg.algo.mlp_keys.decoder))) == 0
+        ):
+            raise RuntimeError("The CNN keys or the MLP keys of the encoder and decoder must not be disjointed")
+        if len(set(cfg.algo.cnn_keys.decoder) - set(cfg.algo.cnn_keys.encoder)) > 0:
+            raise RuntimeError(
+                "The CNN keys of the decoder must be contained in the encoder ones. "
+                f"Those keys are decoded without being encoded: {list(set(cfg.algo.cnn_keys.decoder))}"
+            )
+        if len(set(cfg.algo.mlp_keys.decoder) - set(cfg.algo.mlp_keys.encoder)) > 0:
+            raise RuntimeError(
+                "The MLP keys of the decoder must be contained in the encoder ones. "
+                f"Those keys are decoded without being encoded: {list(set(cfg.algo.mlp_keys.decoder))}"
+            )
+        if cfg.metric.log_level > 0:
+            fabric.print("Encoder CNN keys:", cfg.algo.cnn_keys.encoder)
+            fabric.print("Encoder MLP keys:", cfg.algo.mlp_keys.encoder)
+            fabric.print("Decoder CNN keys:", cfg.algo.cnn_keys.decoder)
+            fabric.print("Decoder MLP keys:", cfg.algo.mlp_keys.decoder)
+        obs_keys = cfg.algo.cnn_keys.encoder + cfg.algo.mlp_keys.encoder
+
+        # Compile dynamic_learning method
+        compiled_dynamic_learning = torch.compile(dynamic_learning, **cfg.algo.compile_dynamic_learning)
+
+        # Compile behaviour_learning method
+        compiled_behaviour_learning = torch.compile(behaviour_learning, **cfg.algo.compile_behaviour_learning)
+
+        # Compile compute_lambda_values method
+        compiled_compute_lambda_values = torch.compile(compute_lambda_values, **cfg.algo.compile_compute_lambda_values)
+
+        world_model, actor, critic, target_critic, player = build_agent(
+            fabric,
+            actions_dim,
+            is_continuous,
+            cfg,
+            observation_space,
+            state["world_model"] if loaded_params else None,
+            state["actor"] if loaded_params else None,
+            state["critic"] if loaded_params else None,
+            state["target_critic"] if loaded_params else None,
+        )
+
+        world_model2, actor2, critic2, target_critic2, player2 = build_agent(
+            fabric,
+            actions_dim,
+            is_continuous,
+            cfg,
+            observation_space,
+            state2["world_model"] if loaded_params else None,
+            state2["actor"] if loaded_params else None,
+            state2["critic"] if loaded_params else None,
+            state2["target_critic"] if loaded_params else None,
+        )
+
+        moments = Moments(
+            cfg.algo.actor.moments.decay,
+            cfg.algo.actor.moments.max,
+            cfg.algo.actor.moments.percentile.low,
+            cfg.algo.actor.moments.percentile.high,
+        )
+        if loaded_params:
+            moments.load_state_dict(state["moments"])
+
+        collect_embeddings(
+            fabric=fabric, 
+            model1=world_model,
+            model2=world_model2,
+            dataloader=eval_dataloader,
+            actions_dim=actions_dim,
+            is_continuous=is_continuous,
+            cfg=cfg,
+            observation_space=observation_space,
+            compiled_dynamic_learning=compiled_dynamic_learning,
+            env=envs,
+            emb_save_root=cfg.collect_embeddings.emb_save_root,
+        )
     else:  ## OFFLINE LEARNING
 
         ####Comment out

@@ -6,6 +6,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 from lightning import Fabric
+from sklearn.metrics.pairwise import cosine_similarity
 from torch import Tensor, nn
 
 from sheeprl.utils.env import make_env
@@ -17,6 +18,31 @@ if TYPE_CHECKING:
 
     from sheeprl.algos.offline_dreamer.agent import PlayerODV3
 
+# constants
+CONCEPT_DICT = {
+    0: 'white_yellow_mug',
+    1: 'butter',
+    2: 'wine_bottle',
+    3: 'yellow_book',
+    4: 'ketchup',
+    5: 'tomato_sauce',
+    6: 'orange_juice',
+    7: 'porcelain_mug',
+    8: 'chefmate_8_frypan',
+    9: 'cream_cheese',
+    10: 'plate',
+    11: 'chocolate_pudding',
+    12: 'red_coffee_mug',
+    13: 'moka_pot',
+    14: 'basket',
+    15: 'milk',
+    16: 'white_bowl',
+    17: 'wooden_tray',
+    18: 'akita_black_bowl',
+    19: 'alphabet_soup',
+    20: 'black_book',
+    21: 'new_salad_dressing',
+}
 AGGREGATOR_KEYS = {
     "Rewards/rew_avg",
     "Rewards/ep_rew_max",
@@ -274,3 +300,31 @@ def log_models_from_checkpoint(
         model_info["moments"] = mlflow.pytorch.log_model(moments, artifact_path="moments")
         mlflow.log_dict(cfg.to_log, "config.json")
     return model_info
+
+
+def calculate_mean_emb(pos_emb_array, TP_hits):
+    pos_emb_array = pos_emb_array.reshape(pos_emb_array.shape[:-1] + (TP_hits.shape[-1], -1))
+    pos_emb_array = pos_emb_array.reshape(-1, pos_emb_array.shape[-2], pos_emb_array.shape[-1])
+    pos_emb_array = np.swapaxes(pos_emb_array, 0, 1)
+    TP_hits = TP_hits.reshape(-1, TP_hits.shape[-1])
+    TP_hits = np.swapaxes(TP_hits, 0, 1)
+    mean_emb_dict = {}
+    for i, (pos_emb, TP_concept) in enumerate(zip(pos_emb_array, TP_hits)):
+        pos_emb = pos_emb[TP_concept, :]
+        if pos_emb.shape[0] > 0:
+            mean_emb_dict[i] = np.mean(pos_emb, axis=0).reshape(1, -1)
+    return mean_emb_dict
+
+
+def compare_concepts(embedding_path1, tp_path1, embedding_path2, tp_path2):
+    emb_arr1 = np.load(embedding_path1)
+    tp_arr1 = np.load(tp_path1).astype(int) > 0
+    emb_arr2 = np.load(embedding_path2)
+    tp_arr2 = np.load(tp_path2).astype(int) > 0
+    mean_embed_dict1 = calculate_mean_emb(emb_arr1, tp_arr1)
+    mean_embed_dict2 = calculate_mean_emb(emb_arr2, tp_arr2)
+    for key in mean_embed_dict1.keys():
+        if key in mean_embed_dict2.keys():
+            print(mean_embed_dict1[key].shape)
+            cos_sim = cosine_similarity(mean_embed_dict1[key], mean_embed_dict2[key])
+            print('concept:', CONCEPT_DICT[key], 'cosine similarity:', cos_sim)
