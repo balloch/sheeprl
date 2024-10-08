@@ -1,3 +1,10 @@
+# Project files
+data
+
+# Slurm files
+*.out
+*.err
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

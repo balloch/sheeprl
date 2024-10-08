@@ -1,0 +1,9 @@
+exp=offline_dreamer_robosuite algo.offline=true env.num_envs=4 env.action_repeat=4 algo.per_rank_batch_size=64 algo=offline_dreamer_S env.capture_video=True algo.world_model.cbm_model.ortho_reg=0.0 algo.world_model.cbm_model.concept_reg=0.0 logger@metric.logger=wandb
+sdf
+
+CUDA_VISIBLE_DEVICES=0 python sheeprl.py exp=offline_dreamer_robosuite algo.offline=false env.wrapper.bddl_file='/home/balloch/code/pick_up_the_tomato_sauce_and_place_it_in_the_basket.bddl' env.num_envs=8 env.action_repeat=4 algo.per_rank_batch_size=32 algo.learning_starts=4000
+
+python sheeprl.py exp=offline_dreamer_robosuite_pretrain algo.offline=True
+
+
+/home/balloch/code/sheeprl/scenes/LIBERO_OBJECT_SCENE_pick_up_the_butter_and_place_it_in_the_basket.bddl

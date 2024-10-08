@@ -506,59 +506,6 @@ def train(
 
 
 
-# class LIBERODataset(Dataset):
-#     def __init__(self, file_path):
-#         self.file = h5py.File(file_path, 'r')
-#         self.data = self.file['data']
-#         self.demo_keys = [k for k in self.data.keys() if k.startswith('demo_')]
-
-#         # Get total number of samples
-#         self.total_samples = self.data.attrs['total']
-
-#         # Get environment arguments
-#         self.env_args = json.loads(self.data.attrs['env_args'])
-
-#         # Create sample index mapping
-#         self.sample_map = []
-#         for demo_key in self.demo_keys:
-#             demo = self.data[demo_key]
-#             num_samples = demo.attrs['num_samples']
-#             self.sample_map.extend([(demo_key, i) for i in range(num_samples)])
-
-#     def __len__(self):
-#         return self.total_samples
-
-#     def __getitem__(self, idx):
-#         demo_key, sample_idx = self.sample_map[idx]
-#         demo = self.data[demo_key]
-
-#         # Load observation
-#         obs = {k: torch.from_numpy(demo['obs'][k][sample_idx]) for k in demo['obs'].keys()}
-
-#         # Load action, reward, and done
-#         action = torch.from_numpy(demo['actions'][sample_idx])
-#         reward = torch.tensor(demo['rewards'][sample_idx])
-#         done = torch.tensor(demo['dones'][sample_idx])
-
-#         # Load next observation
-#         next_obs = {k: torch.from_numpy(demo['next_obs'][k][sample_idx]) for k in demo['next_obs'].keys()}
-
-#         return obs, action, reward, done, next_obs
-
-#     def close(self):
-#         self.file.close()
-
-# def load_dataset(data_path, batch_size, num_workers=4):
-#     dataset = LIBERODataset(data_path)
-#     dataloader = DataLoader(
-#         dataset,
-#         batch_size=batch_size,
-#         shuffle=True,
-#         num_workers=num_workers,
-#         pin_memory=True
-#     )
-#     return dataloader, dataset.env_args
-
 
 def get_datasets_from_benchmark(benchmark,libero_folder,seq_len=64,obs_modality=None):
     datasets = []

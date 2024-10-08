@@ -1,0 +1,1 @@
+exp=offline_dreamer_robosuite env.wrapper.bddl_file='scenes/LIBERO_OBJECT_SCENE_pick_up_the_butter_and_place_it_in_the_basket.bddl'  algo.offline=false env.num_envs=4 env.action_repeat=4 algo.per_rank_batch_size=64 algo=offline_dreamer_S env.capture_video=True algo.world_model.cbm_model.ortho_reg=0.5 algo.world_model.cbm_model.concept_reg=0.5 logger@metric.logger=wandb
