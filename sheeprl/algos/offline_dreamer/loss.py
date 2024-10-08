@@ -35,7 +35,6 @@ def get_concept_loss(model, predicted_concepts, target_concepts, isList=False):
     pred_perm = predicted_concepts.permute(1,3,0,2)
     tar_perm = target_concepts.permute(1,3,0,2)
     # loss_bce = torch.nn.BCEWithLogitsLoss(reduction='none')
-    # import pdb; pdb.set_trace()
     # with open("obj_prediction_weights.npy","rb") as of: weights = np.load(of)
     # loss_ce = torch.nn.CrossEntropyLoss(reduction='none')
     mean_weight = 2*torch.Tensor([0.8673, 0.1327]).to(predicted_concepts.device) # because 2 is the number of classes

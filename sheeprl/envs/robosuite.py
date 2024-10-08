@@ -323,7 +323,6 @@ class RobosuiteWrapper(gym.Wrapper):
         if self.supervised_concepts:
             self.update_concepts(obs)
             infos["concepts"] = self.get_concepts()
-            # import pdb; pdb.set_trace()
 
         if self.reward_shaping and self.bddl_file:
             r_reach, r_grasp, r_lift, r_hover = self.staged_rewards()
@@ -395,7 +394,6 @@ class RobosuiteWrapper(gym.Wrapper):
         if self.supervised_concepts:
             self.update_concepts(obs)
             infos["concepts"] = self.get_concepts()
-            # import pdb; pdb.set_trace()
 
         return obs, infos
         # return obs, (), False, False, {}
@@ -440,7 +438,6 @@ class RobosuiteWrapper(gym.Wrapper):
         return tracked_stats
 
     def update_concepts(self, obs=None):
-        # import pdb; pdb.set_trace()
         if self._last_concepts is None:
             self._last_concepts = []
             if 'bddl_objects' in self.supervised_concepts:

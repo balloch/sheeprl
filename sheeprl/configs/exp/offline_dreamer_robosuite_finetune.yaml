@@ -2,7 +2,7 @@
 
 defaults:
   - offline_dreamer_robosuite
-  - override /algo: offline_dreamer_S
+  - override /algo: offline_dreamer_manip
   - override /env: robosuite
 #  - override /model_manager: p2e_dv3_finetuning
   - _self_
@@ -30,14 +30,22 @@ env:
 
 checkpoint:
   pretrain_ckpt_path: ???
-  every: 10000
+  every: 100
   buffer:
     load_from_pretrain: False
+
+# Validate
+validate:
+  every: 100
+  render: True
+  save_to_file: True
+  data: null
+  val_transforms: null
 
 # Algorithm
 algo:
   offline: False
-  total_steps: 10_000_000
+  total_steps: 1_000_000
   cnn_keys:
     encoder:
       - agentview_rgb
@@ -59,7 +67,7 @@ algo:
 
 # Metric
 metric:
-  log_every: 1000
+  log_every: 10
 
 fabric:
   accelerator: cuda

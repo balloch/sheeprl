@@ -203,25 +203,21 @@ class CNNDecoder(nn.Module):
                 input_channels=(2 ** (stages - 1)) * channels_multiplier,
                 hidden_channels=(
                     torch.tensor([2**i for i in reversed(range(stages - 1))]) * channels_multiplier
-                ).tolist()
-                + [self.output_dim[0]],
+                    ).tolist() + [self.output_dim[0]],
                 cnn_layer=nn.ConvTranspose2d,
                 layer_args=[
                     {"kernel_size": 4, "stride": 2, "padding": 1, "bias": layer_norm_cls == nn.Identity}
-                    for _ in range(stages - 1)
-                ]
-                + [{"kernel_size": 4, "stride": 2, "padding": 1}],
+                    for _ in range(stages - 1)]+ [{"kernel_size": 4, "stride": 2, "padding": 1}],
                 activation=[activation for _ in range(stages - 1)] + [None],
                 norm_layer=[layer_norm_cls for _ in range(stages - 1)] + [None],
                 norm_args=[
                     {**layer_norm_kw, "normalized_shape": (2 ** (stages - i - 2)) * channels_multiplier}
-                    for i in range(stages - 1)
-                ]
-                + [None],
+                    for i in range(stages - 1)] + [None],
+                final_sigmoid=final_sigmoid,
             ),
         ]
-        if final_sigmoid:
-            layers_list.append(nn.Sigmoid())
+        # if final_sigmoid:
+        #     layers_list.append(nn.Sigmoid())
         self.model = nn.Sequential(*layers_list)
 
     def forward(self, latent_states: Tensor) -> Dict[str, Tensor]:
@@ -1008,7 +1004,6 @@ class CEM(nn.Module):
                 if concept_probs == None:
                     concept_probs=prob_gumbel
                     all_logits=logits
-                    # import pdb; pdb.set_trace()
                     expanded_logits = logits.unsqueeze(-2)
                 else:
                     concept_probs=torch.cat((concept_probs,prob_gumbel),-1)  # List of probabilities
@@ -1021,7 +1016,6 @@ class CEM(nn.Module):
                 else:
                     non_concept_latent= torch.cat((non_concept_latent,context),-1)
 
-        # import pdb; pdb.set_trace()
         latent = torch.cat((concept_probs,all_concept_latent,non_concept_latent),-1)
         return latent, expanded_logits, concept_probs[...,::2], all_concept_latent, non_concept_latent
 

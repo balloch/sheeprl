@@ -8,7 +8,16 @@ defaults:
 
 # Experiment
 seed: 5
-val_video: True
+
+# Validate
+validate:
+  every: 500
+  render: True
+  save_to_file: True
+  data: null
+  val_transforms: null
+
+# Offline Training
 train_transforms:
   Pad:
     pad: 4
@@ -16,7 +25,6 @@ train_transforms:
   RandomCrop:
     size: ${env.screen_size}
 
-val_transforms: null
 
 # # Environment
 env:
@@ -25,6 +33,8 @@ env:
   wrapper:
     bddl_file: null
     reward_shaping: False
+    supervised_concepts: 'bddl_objects' #list of: 'bddl_objects' and/or 'joint_positions'
+
 #   action_repeat: 2
 #   max_episode_steps: -1
 #   wrapper:
@@ -35,7 +45,7 @@ env:
 
 # Checkpoint
 checkpoint:
-  every: 10000
+  every: 1000
 
 # # Buffer
 buffer:
@@ -44,9 +54,9 @@ buffer:
 # Algorithm
 algo:
   run_test: False
-  per_rank_batch_size: 32
+  per_rank_batch_size: 128
   offline: True
-  offline_train_split: 0.9
+  offline_train_split: 0.95
   total_steps: 500_000
   cnn_keys:
     encoder:
@@ -60,7 +70,7 @@ algo:
 
 # Metric
 metric:
-  log_every: 1000
+  log_every: 10
 
 fabric:
   accelerator: cuda

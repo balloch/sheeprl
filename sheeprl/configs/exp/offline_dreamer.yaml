@@ -1,7 +1,7 @@
 # @package _global_
 
 defaults:
-  - override /algo: offline_dreamer_S
+  - override /algo: offline_dreamer_manip
   - override /env: robosuite
   - override /model_manager: offline_dreamer
   - _self_
@@ -24,10 +24,11 @@ algo:
 
 # Checkpoint
 checkpoint:
-  every: 4000
+  every: 1000
 
+# Validate
 validate:
-  every: 9000
+  every: 500
   render: True
   save_to_file: True
   data: null

@@ -324,20 +324,6 @@ def render_vid(
     os.makedirs(log_dir, exist_ok=True)
     # os.chmod(log_dir, 0o777)
 
-    def increment_filename(directory, filename):
-        if filename[0] == '/':
-            filename = filename[1:]
-        name, ext = os.path.splitext(filename)
-        version = 0
-        new_filename = filename
-        while os.path.exists(os.path.join(directory, new_filename)):
-            # Create a new filename by appending the version number
-            version += 1
-            new_filename = f"{name}_{version}{ext}"
-        if filename == new_filename:
-            version = ''
-        return new_filename, version
-
     filename, increment = increment_filename(log_dir, f'recon_{obs_key}_vid.mp4')
 
     if cfg.validate.save_to_file:
@@ -355,6 +341,21 @@ def render_vid(
                 plugin='FFMPEG',
                 extension='.mp4',
                 )
+
+
+def increment_filename(directory, filename):
+    if filename[0] == '/':
+        filename = filename[1:]
+    name, ext = os.path.splitext(filename)
+    version = 0
+    new_filename = filename
+    while os.path.exists(os.path.join(directory, new_filename)):
+        # Create a new filename by appending the version number
+        version += 1
+        new_filename = f"{name}_{version}{ext}"
+    if filename == new_filename:
+        version = ''
+    return new_filename, version
 
     # if "wandb" in cfg.metric.logger._target_.lower() and qualitative_log is False:
     #     wandb.log({"data_video": wandb.Video(

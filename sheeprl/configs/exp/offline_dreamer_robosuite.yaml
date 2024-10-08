@@ -25,7 +25,14 @@ env:
 
 # Checkpoint
 checkpoint:
-  every: 10000
+  every: 1000
+
+# Validate
+validate:
+  every: 500
+  render: True
+  save_to_file: True
+  data: null
 
 # # Buffer
 buffer:
@@ -47,7 +54,7 @@ algo:
 
 # Metric
 metric:
-  log_every: 1000
+  log_every: 10
 
 fabric:
   accelerator: cuda
