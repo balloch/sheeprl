@@ -13,6 +13,9 @@ from libero.libero.envs import TASK_MAPPING  #*
 import time
 from functools import reduce
 import operator
+from pyinstrument import Profiler
+import pyinstrument
+from pyinstrument.renderers import ConsoleRenderer
 
 
 
@@ -32,7 +35,7 @@ class RobosuiteWrapper(gym.Wrapper):
         reward_shaping: dotdict = None,
         ignore_done: bool = True,
         has_renderer: bool = False,
-        has_offscreen_renderer: bool = False,
+        has_offscreen_renderer: bool = True,
         use_camera_obs: bool = True,
         use_vector_obs: bool = False,
         control_freq: int = 20,
@@ -89,6 +92,7 @@ class RobosuiteWrapper(gym.Wrapper):
             has_offscreen_renderer=self.has_offscreen_renderer,
             use_camera_obs=self.use_camera_obs,
             control_freq=self.control_freq,
+            render_gpu_device_id=0,
         )
         extra_robosuite_make_args=dict(
             env_name=self.env_name,
@@ -295,11 +299,6 @@ class RobosuiteWrapper(gym.Wrapper):
     @property
     def render_mode(self) -> str:
         return self._render_mode
-
-    # def seed(self, seed: Optional[int] = None):
-    #     self._true_action_space.seed(seed)
-    #     self._norm_action_space.seed(seed)
-    #     self._observation_space.seed(seed)
 
     def step(
         self, action: Any

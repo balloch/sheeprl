@@ -1064,6 +1064,10 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
         top_ep_rew = []
         last_ep_rew = 0
 
+        if cfg.do_profile:
+            profiler = Profiler()
+            profile_renderer = ConsoleRenderer(unicode=True, color=True, show_all=True)
+
         cumulative_per_rank_gradient_steps = 0
         for loop_iter_num in range(start_iter, total_iters + 1):
             environment_step += environment_steps_per_iter
@@ -1072,6 +1076,9 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             with torch.inference_mode():
                 # Measure environment interaction time: this considers both the model forward
                 # to get the action given the observation and the time taken into the environment
+                if cfg.do_profile:
+                    profiler.start()
+
                 with timer("Time/env_interaction_time", SumMetric, sync_on_compute=False):
                     # Sample an action given the observation received by the environment
                     if (
@@ -1110,6 +1117,10 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                         real_actions.reshape(envs.action_space.shape)
                     )
                     dones = np.logical_or(terminated, truncated).astype(np.uint8)
+
+                if cfg.do_profile:
+                    pyintsession = profiler.stop()
+                    print(profile_renderer.render(pyintsession))
 
                 step_data["is_first"] = np.zeros_like(step_data["terminated"])
                 if "restart_on_exception" in infos:
@@ -1854,6 +1865,9 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                 print(profile_renderer.render(pyintsession))
 
 
+    if cfg.do_profile:
+        html = profiler.output_html()
+        profiler.write_html('html_output.html', timeline=False, show_all=True)
     if fabric.is_global_zero and cfg.algo.run_test:
         test(player, fabric, cfg, log_dir, greedy=False)
 
