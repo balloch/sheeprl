@@ -939,10 +939,11 @@ class MinedojoActor(Actor):
 
 
 class CEM(nn.Module):
-    def __init__(self, n_concepts, concept_bins, emb_size, input_size, concept_type, fabric):
+    def __init__(self, n_concepts, concept_bins, emb_size, residual_size, input_size, concept_type, fabric):
         super().__init__()
         self.n_concepts=n_concepts
         self.emb_size=emb_size
+        self.residual_size=residual_size
         self.input_size=input_size
         self.concept_type=concept_type
         self.concept_bins=concept_bins
@@ -969,7 +970,7 @@ class CEM(nn.Module):
 
         self.concept_context_generators.append(
         torch.nn.Sequential(*[
-            torch.nn.Linear(self.input_size,self.emb_size),
+            torch.nn.Linear(self.input_size,self.residual_size),
                 ]))
 
     def forward(self,h,probs=None,return_all=False):
@@ -1262,6 +1263,7 @@ def build_agent(
             world_model_cfg.cbm_model.n_concepts,
             world_model_cfg.cbm_model.concept_bins,
             world_model_cfg.cbm_model.emb_size,
+            world_model_cfg.cbm_model.residual_size,
             latent_state_size,
             world_model_cfg.cbm_model.concept_type,
             fabric,

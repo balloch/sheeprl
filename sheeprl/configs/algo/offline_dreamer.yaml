@@ -156,6 +156,7 @@ world_model:
     use_cbm: True
     n_concepts: 23
     emb_size: 16
+    residual_size: 16
     concept_type: ["bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin", "bin","bin"]
     concept_bins: [2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2]
     ortho_reg: 1.0 #e-2
