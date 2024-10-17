@@ -1097,8 +1097,8 @@ def build_agent(
     recurrent_state_size = world_model_cfg.recurrent_model.recurrent_state_size
     stochastic_size = world_model_cfg.stochastic_size * world_model_cfg.discrete_size
     latent_state_size = stochastic_size + recurrent_state_size
-    cem_latent_state_size = (world_model_cfg.cbm_model.n_concepts + 1) * world_model_cfg.cbm_model.emb_size + \
-        sum(world_model_cfg.cbm_model.concept_bins)
+    cem_latent_state_size = (world_model_cfg.cbm_model.n_concepts) * world_model_cfg.cbm_model.emb_size + \
+        world_model_cfg.cbm_model.residual_size + sum(world_model_cfg.cbm_model.concept_bins)
 
     # Define models
     cnn_stages = int(np.log2(cfg.env.screen_size) - np.log2(4))
