@@ -148,15 +148,18 @@ def reconstruction_loss(
         concept_loss, loss_per_concept = get_concept_loss(world_model.cem, cem_data['concept_logits'], cem_data['target_concepts'])
         loss_dict['concept_loss'] = concept_loss.mean()
         loss_dict['loss_per_concept'] = loss_per_concept
-        orthognality_loss = []
-        for c in range(world_model.cem.n_concepts):  #TODO why sum?
-            orthognality_loss.append(OrthogonalProjectionLoss(
-                cem_data['real_concept_latent'][:, :, c*world_model.cem.emb_size: (c*world_model.cem.emb_size) + world_model.cem.emb_size],
-                cem_data['real_non_concept_latent']))
-            orthognality_loss.append(OrthogonalProjectionLoss(
-                cem_data['rand_concept_latent'][:, :, c*world_model.cem.emb_size: (c*world_model.cem.emb_size) + world_model.cem.emb_size],
-                cem_data['rand_non_concept_latent']))
-        loss_dict['orthognality_loss'] = torch.stack(orthognality_loss).mean()
+        if world_model.cem.emb_size == world_model.cem.residual_size:
+            orthognality_loss = []
+            for c in range(world_model.cem.n_concepts):  #TODO why sum?
+                orthognality_loss.append(OrthogonalProjectionLoss(
+                    cem_data['real_concept_latent'][:, :, c*world_model.cem.emb_size: (c*world_model.cem.emb_size) + world_model.cem.emb_size],
+                    cem_data['real_non_concept_latent']))
+                orthognality_loss.append(OrthogonalProjectionLoss(
+                    cem_data['rand_concept_latent'][:, :, c*world_model.cem.emb_size: (c*world_model.cem.emb_size) + world_model.cem.emb_size],
+                    cem_data['rand_non_concept_latent']))
+            loss_dict['orthognality_loss'] = torch.stack(orthognality_loss).mean()
+        else:
+            loss_dict['orthognality_loss'] =  torch.zeros(1).to(rewards.device)
 
         cbm_loss = concept_reg * concept_loss + ortho_reg * loss_dict['orthognality_loss']
         loss_dict['cbm_loss'] = cbm_loss.mean()
