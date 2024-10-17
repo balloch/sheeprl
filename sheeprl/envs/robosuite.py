@@ -501,10 +501,16 @@ class RobosuiteWrapper(gym.Wrapper):
         # If statement to prevent reward from increasing if dist > 1
         r_reach = max(0, min(r_reach, reach_mult)) if eef_to_target_dist <= 1 else 0
 
-        is_grasping = self.env._check_grasp(
-                    gripper=self.env.robots[0].gripper,
-                    object_geoms=self._target_object['object'].contact_geoms
-                )
+        is_left_contact = check_contact(self.env.sim, names[0], self._target_object['object'])
+        is_right_contact = check_contact(self.env.sim, names[1], self._target_object['object'])
+        is_touching = is_left_contact and is_right_contact
+        
+        finger1_col = self.env.sim.data.geom_xpos[self.env.sim.model.geom_name2id("gripper0_finger1_collision")]
+        finger2_col = self.env.sim.data.geom_xpos[self.env.sim.model.geom_name2id("gripper0_finger2_collision")]
+        is_open = np.linalg.norm(finger1_col - finger2_col) > 0.02 # Magic number, model starts at 0.06419 (significantly open)    
+        
+        # As per the isaac cube stack definition
+        is_grasping = is_open and is_touching
 
         # Normalized
         goal_xy = self.env.sim.data.body_xpos[self._goal_location['body_geom_id']][:2]
