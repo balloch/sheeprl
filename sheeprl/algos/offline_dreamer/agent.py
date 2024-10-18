@@ -1044,10 +1044,10 @@ class CBWM(WorldModel):
         observation_model: _FabricModule,
         reward_model: _FabricModule,
         continue_model: Optional[_FabricModule],
-        cem: Optional[_FabricModule] = None,
+        cbm_model: Optional[_FabricModule] = None,
     ) -> None:
         super().__init__(encoder, rssm, observation_model, reward_model, continue_model)
-        self.cem = cem
+        self.cem = cbm_model
 
 
 def build_agent(
@@ -1325,10 +1325,26 @@ def build_agent(
     # Load models from checkpoint
     if world_model_state:
         world_model.load_state_dict(world_model_state)
+        # if world_model_cfg.cbm_model.use_cbm is True:
+        #     world_model.reward_model.model[-1].apply(uniform_init_weights(0.0))
     if actor_state:
         actor.load_state_dict(actor_state)
     if critic_state:
         critic.load_state_dict(critic_state)
+
+    # Finetuning specifics
+    if cfg.finetuning:
+        for model_name, model_attr in cfg.finetuning.weights.items():
+            if model_attr['freeze'] or model_attr['reset']:
+                # import pdb; pdb.set_trace()
+                model = locals()[model_name]
+                if model_attr['freeze']:
+                    for param in model.parameters():
+                        param.requires_grad = False
+                if model_attr['reset']:
+                    model.apply(init_weights)
+                    if cfg.algo.hafner_initialization:
+                        model.model[-1].apply(uniform_init_weights(1.0))
 
     # Create the player agent
     fabric_player = get_single_device_fabric(fabric)
