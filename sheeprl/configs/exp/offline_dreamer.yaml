@@ -33,6 +33,9 @@ validate:
   save_to_file: True
   data: null
 
+# Finetuning
+finetuning: null
+
 # Buffer
 buffer:
   size: 1000000

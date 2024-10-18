@@ -30,17 +30,48 @@ env:
 
 checkpoint:
   pretrain_ckpt_path: ???
-  every: 100
+  every: 1000
   buffer:
     load_from_pretrain: False
 
 # Validate
 validate:
-  every: 100
+  every: 1000
   render: True
   save_to_file: True
   data: null
   val_transforms: null
+
+# Finetuning
+finetuning:
+  weights:
+    transition_model:
+      freeze: False
+      reset: False
+    representation_model:
+      freeze: False
+      reset: False
+    encoder:
+      freeze: False
+      reset: False
+    observation_model:
+      freeze: False
+      reset: False
+    reward_model:
+      freeze: False
+      reset: True
+    continue_model:
+      freeze: False
+      reset: False
+    concept_bottleneck_model:
+      freeze: False
+      reset: False
+    actor:
+      freeze: False
+      reset: False
+    critic:
+      freeze: False
+      reset: False
 
 # Algorithm
 algo:
@@ -53,21 +84,17 @@ algo:
       - agentview_rgb
   mlp_keys:
     encoder: []
-  learning_starts: 10_000
+  learning_starts: 4000
   replay_ratio: 0.5
-  finetuning:
-    freeze:
-      encoder: True
-      decoder: False
-      actor: False
-      critic: False
-      world_model: False
-      cbm_model: False
-
+  # World model optimizer
+  world_model:
+    optimizer:
+      lr: 1e-7
+      eps: 1e-9
 
 # Metric
 metric:
-  log_every: 10
+  log_every: 20
 
 fabric:
   accelerator: cuda

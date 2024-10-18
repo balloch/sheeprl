@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=nocem_dreamer_pretrain2
-#SBATCH --output=nocem_dreamer_pretrain2.out
-#SBATCH --error=nocem_dreamer_pretrain2.err
+#SBATCH --job-name=nocem_cbwm_pretrain2
+#SBATCH --output=nocem_cbwm_pretrain2.out
+#SBATCH --error=nocem_cbwm_pretrain2.err
 #SBATCH --partition="ei-lab"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
