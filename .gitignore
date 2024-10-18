@@ -1,5 +1,6 @@
 # Project files
 data
+demonstration_data
 
 # Slurm files
 *.out

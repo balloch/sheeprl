@@ -4,7 +4,7 @@ defaults:
 
 # Override from `default` config
 id: ${env.wrapper.robot}_${env.wrapper.env_name}
-action_repeat: 1
+action_repeat: 2
 max_episode_steps: 1000
 sync_env: True
 env_stats:
