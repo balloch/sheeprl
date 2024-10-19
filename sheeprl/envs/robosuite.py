@@ -581,9 +581,9 @@ class RobosuiteWrapper(gym.Wrapper):
         reward = reach_reward = 2 * (1 - np.tanh(5 * eef_to_target_dist))
         
         # Grasp and place reward
-        goal_xyz = self.env.sim.data.body_xpos[self._goal_location['body_geom_id']]
-        object_xyz = self.env.sim.data.body_xpos[self._target_object['body_geom_id']]
-        target_to_goal_dist = np.linalg.norm(goal_xyz - object_xyz) / self._initial_distances['target_to_goal_xyz']
+        goal_xy = self.env.sim.data.body_xpos[self._goal_location['body_geom_id']][:2]
+        object_xy = self.env.sim.data.body_xpos[self._target_object['body_geom_id']][:2]
+        target_to_goal_dist = np.linalg.norm(goal_xy - object_xy) / self._initial_distances['target_to_goal_xy']
         
         # [0, 1]
         place_reward = 1 - np.tanh(5.0 * target_to_goal_dist)
