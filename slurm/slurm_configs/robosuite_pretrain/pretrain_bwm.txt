@@ -1,0 +1,1 @@
+exp=offline_dreamer_robosuite algo.offline=true algo.per_rank_batch_size=64 algo=offline_dreamer_S env.capture_video=True algo.world_model.cbm_model.ortho_reg=0.0 algo.world_model.cbm_model.concept_reg=0.0 logger@metric.logger=wandb

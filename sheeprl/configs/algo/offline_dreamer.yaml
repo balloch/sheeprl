@@ -17,18 +17,9 @@ replay_ratio: 1
 offline: True
 offline_train_split: 0.8
 num_epochs: 100
-supervised_concepts: True
 learning_starts: 1024
 per_rank_pretrain_steps: 0
 per_rank_sequence_length: ???
-finetuning:
-  freeze:
-    encoder: False
-    decoder: False
-    actor: False
-    critic: False
-    world_model: False
-    cbm_model: False
 
 # Encoder and decoder keys
 cnn_keys:
@@ -118,6 +109,7 @@ world_model:
 
   # Decoder
   observation_model:
+    decoder_reg: 1.0
     cnn_channels_multiplier: ${algo.world_model.encoder.cnn_channels_multiplier}
     cnn_act: ${algo.cnn_act}
     dense_act: ${algo.dense_act}
@@ -125,12 +117,14 @@ world_model:
     cnn_layer_norm: ${algo.cnn_layer_norm}
     mlp_layer_norm: ${algo.mlp_layer_norm}
     dense_units: ${algo.dense_units}
+    final_sigmoid: False
     compile:
       disable: False
       fullgraph: True
 
   # Reward model
   reward_model:
+    reward_reg: 1.0
     dense_act: ${algo.dense_act}
     mlp_layers: ${algo.mlp_layers}
     layer_norm: ${algo.mlp_layer_norm}
@@ -142,6 +136,7 @@ world_model:
 
   # Discount model
   discount_model:
+    cont_reg: 1.0
     learnable: True
     dense_act: ${algo.dense_act}
     mlp_layers: ${algo.mlp_layers}

@@ -4,7 +4,7 @@ defaults:
 
 # Override from `default` config
 id: ${env.wrapper.robot}_${env.wrapper.env_name}
-action_repeat: 1
+action_repeat: 2
 max_episode_steps: 1000
 sync_env: True
 env_stats:
@@ -53,7 +53,27 @@ wrapper:
   hard_reset: False
   horizon: ${env.max_episode_steps}
   reward_scale: 1.0
-  reward_shaping: True
+  reward_shaping:
+    disable: False
+    mode: nvidia # summed | stepped | nvidia
+    stages:
+      reach:
+        mult: 0.25
+        disable: False
+      grasp:
+        mult: 0.1
+        disable: False
+        step: 0.0 # Step is the amount of immediate reward once this stage is reached i.e.: max(reach_reward) + step = min(grasp_reward)
+      lift:
+        mult: 0.09817477042 # pi / 32
+        disable: False
+        step: 0.0
+      hover:
+        mult: 0.1
+        disable: False
+        step: 0.0
+    tolerance: 0.01 # tolerance for considering a stage as "started" measured in absolute value
+    # I tried setting it as a proportion but it doesn't work well with our mixing function for lifting (triggers early)
   ignore_done: True
   has_renderer: False
   has_offscreen_renderer: True
@@ -61,6 +81,7 @@ wrapper:
   use_vector_obs: False
   control_freq: 20
   action_repeat: ${env.action_repeat}
+  supervised_concepts: null #options: list of: 'bddl_objects' and/or 'joint_positions'
 
 # env_name:
 # [0] 'Door'

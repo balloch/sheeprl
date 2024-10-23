@@ -1,4 +1,37 @@
-# ⚡ SheepRL 🐑
+# ⚡ CBWM: Concept Bottleneck World Models for Interpretable Knowledge Preservation 🐑
+
+## Install
+
+  1. Create new virtual or conda environment for Python 3.10 and activate that environment.
+  2. Clone this repo and install SheepRL according to the below instructions.
+  3. Clone our custom fork of [LIBERO](https://www.github.com/balloch/LIBERO), switch to the `gymnasium` branch, and install LIBERO in the same conda environment.
+  4. For pretraining, modify the config file at `$HOME/.libero/config.yaml` to correctly reflect your LIBERO install.
+
+## Run
+
+To pretrain:
+```
+python sheeprl.py exp=offline_dreamer_robosuite_pretrain
+```
+
+The assumption is that you will want to pretrain on the LIBERO_90 dataset
+
+To finetine:
+```
+python sheeprl.py exp=offline_dreamer_robosuite_finetune env.wrapper.bddl_file=/home/balloch/code/sheeprl/pick_up_the_tomato_sauce_and_place_it_in_the_basket.bddl checkpoint.pretrain_ckpt_path=/home/balloch/code/sheeprl/logs/runs/offline_dreamer/Panda_PickPlace/offline_cbwm1/version_0/checkpoint/ckpt_1250000_0.ckpt
+```
+
+To train CBWM from scratch:
+```
+python sheeprl.py exp=offline_dreamer_robosuite env.wrapper.bddl_file=scenes/LIBERO_OBJECT_SCENE_pick_up_the_butter_and_place_it_in_the_basket.bddl algo.world_model.cbm_model.use_cbm=True
+```
+
+Replace the BDDL file with whatever scene you want to work in.
+
+The default logger, as with SheepRL, is TensorBoard, and if you want to use Weights and Biases simply add the argument `logger@metric.logger=wandb`.
+
+
+## Based on [SheepRL](https://github.com/Eclectic-Sheep/sheeprl):
 
 [![Python 3.8](https://img.shields.io/badge/python-3.8-blue.svg)](https://www.python.org/downloads/release/python-380/)
 [![Python 3.9](https://img.shields.io/badge/python-3.9-blue.svg)](https://www.python.org/downloads/release/python-390/)
@@ -181,16 +214,16 @@ The training times of our implementations compared to the ones of Stable Baselin
 > [!NOTE]
 >
 > All experiments have been run on 4 CPUs in [Lightning Studio](https://lightning.ai/).
-> All benchmarks, but the Dreamers' ones, have been run 5 times and we have taken the mean and the std of the runs. 
+> All benchmarks, but the Dreamers' ones, have been run 5 times and we have taken the mean and the std of the runs.
 > We have disabled the test function, the logging, and the checkpoints. Moreover, the models were not registered using MLFlow.
-> 
+>
 > Dreamers' benchmarks have been run 1 time with logging and checkpoints, without running the test function.
 >
 > 1. The StableBaselines3 version is `v2.2.1`, please install the package with `pip install stable-baselines3==2.2.1`
 
 ## What
 
-An easy-to-use framework for reinforcement learning in PyTorch, accelerated with [Lightning Fabric](https://lightning.ai/docs/fabric/stable/).  
+An easy-to-use framework for reinforcement learning in PyTorch, accelerated with [Lightning Fabric](https://lightning.ai/docs/fabric/stable/).
 The algorithms sheeped by sheeprl out-of-the-box are:
 
 | Algorithm                 | Coupled            | Decoupled          | Recurrent          | Vector obs         | Pixel obs          | Status             |
@@ -272,7 +305,7 @@ pip install sheeprl
 ```
 
 > [!NOTE]
-> 
+>
 > To install optional dependencies one can run for example `pip install sheeprl[atari,box2d,dev,mujoco,test]`
 
 For a detailed information about all the optional dependencies you can install please have a look at the [What](#what) section
@@ -293,7 +326,7 @@ pip install .
 ```
 
 > [!NOTE]
-> 
+>
 > To install optional dependencies one can run for example `pip install .[atari,box2d,dev,mujoco,test]`
 
 #### Installing the framework from the GitHub repo
@@ -339,7 +372,7 @@ pip install "sheeprl[box2d,atari,mujoco,minerl,supermario,dev,test] @ git+https:
 #### Additional: installing on an M-series Mac
 
 > [!CAUTION]
-> 
+>
 > If you are on an M-series Mac and encounter an error attributed box2dpy during installation, you need to install SWIG using the instructions shown below.
 
 
@@ -359,12 +392,12 @@ pip install "sheeprl[atari,box2d,mujoco,dev,test] @ git+https://github.com/Eclec
 #### Additional: MineRL and MineDojo
 
 > [!NOTE]
-> 
+>
 > If you want to install the *minedojo* or *minerl* environment support, Java JDK 8 is required: you can install it by following the instructions at this [link](https://docs.minedojo.org/sections/getting_started/install.html#on-ubuntu-20-04).
 
 > [!CAUTION]
 >
-> **MineRL** and **MineDojo** environments have **conflicting requirements**, so **DO NOT install them together** with the `pip install sheeprl[minerl,minedojo]` command, but instead **install them individually** with either the command `pip install sheeprl[minerl]` or `pip install sheeprl[minedojo]` before running an experiment with the MineRL or MineDojo environment, respectively. 
+> **MineRL** and **MineDojo** environments have **conflicting requirements**, so **DO NOT install them together** with the `pip install sheeprl[minerl,minedojo]` command, but instead **install them individually** with either the command `pip install sheeprl[minerl]` or `pip install sheeprl[minedojo]` before running an experiment with the MineRL or MineDojo environment, respectively.
 
 ### Run an experiment with SheepRL
 
@@ -399,7 +432,7 @@ if you have installed SheepRL from PyPi.
 That's all it takes to train an agent with SheepRL! 🎉
 
 > Before you start using the SheepRL framework, it is **highly recommended** that you read the following instructional documents:
-> 
+>
 > 1. How to [run experiments](https://github.com/Eclectic-Sheep/sheeprl/blob/main/howto/run_experiments.md)
 > 2. How to [modify the default configs](https://github.com/Eclectic-Sheep/sheeprl/blob/main/howto/configs.md)
 > 3. How to [work with steps](https://github.com/Eclectic-Sheep/sheeprl/blob/main/howto/work_with_steps.md)

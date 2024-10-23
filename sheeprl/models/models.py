@@ -239,6 +239,7 @@ class DeCNN(nn.Module):
         norm_args: Optional[ArgsType] = None,
         activation: Optional[Union[ModuleType, Sequence[ModuleType]]] = nn.ReLU,
         act_args: Optional[ArgsType] = None,
+        final_sigmoid: bool = False,
     ) -> None:
         super().__init__()
         num_layers = len(hidden_channels)
@@ -270,6 +271,8 @@ class DeCNN(nn.Module):
             model += miniblock(in_dim, out_dim, cnn_layer, l_args, drop, drop_args, norm, norm_args, activ, act_args)
 
         self._output_dim = hidden_sizes[-1]
+        if final_sigmoid:
+            model.append(nn.Sigmoid())
         self._model = nn.Sequential(*model)
 
     @property

@@ -1,5 +1,5 @@
 defaults:
-  - dreamer_v3_XL
+  - offline_dreamer_XL
   - _self_
 
 dense_units: 640

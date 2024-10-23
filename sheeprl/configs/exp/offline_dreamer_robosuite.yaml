@@ -2,7 +2,7 @@
 
 defaults:
   - offline_dreamer
-  - override /algo: offline_dreamer_S
+  - override /algo: offline_dreamer_manip
   - override /env: robosuite
   - _self_
 
@@ -12,6 +12,8 @@ seed: 5
 # # Environment
 env:
   max_episode_steps: 1000
+  wrapper:
+    supervised_concepts: 'bddl_objects' #list of: 'bddl_objects' and/or 'joint_positions'
 
 #   action_repeat: 2
 #   max_episode_steps: -1
@@ -23,7 +25,14 @@ env:
 
 # Checkpoint
 checkpoint:
-  every: 10000
+  every: 1000
+
+# Validate
+validate:
+  every: 500
+  render: True
+  save_to_file: True
+  data: null
 
 # # Buffer
 buffer:
@@ -45,7 +54,7 @@ algo:
 
 # Metric
 metric:
-  log_every: 1000
+  log_every: 10
 
 fabric:
   accelerator: cuda

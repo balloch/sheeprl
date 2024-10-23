@@ -188,6 +188,7 @@ class CNNDecoder(nn.Module):
         layer_norm_cls: Callable[..., nn.Module] = LayerNormChannelLast,
         layer_norm_kw: Dict[str, Any] = {"eps": 1e-3},
         stages: int = 4,
+        final_sigmoid=False,
     ) -> None:
         super().__init__()
         self.keys = keys
@@ -195,30 +196,29 @@ class CNNDecoder(nn.Module):
         self.cnn_encoder_output_dim = cnn_encoder_output_dim
         self.image_size = image_size
         self.output_dim = (sum(output_channels), *image_size)
-        self.model = nn.Sequential(
+        layers_list = [
             nn.Linear(latent_state_size, cnn_encoder_output_dim),
             nn.Unflatten(1, (-1, 4, 4)),
             DeCNN(
                 input_channels=(2 ** (stages - 1)) * channels_multiplier,
                 hidden_channels=(
                     torch.tensor([2**i for i in reversed(range(stages - 1))]) * channels_multiplier
-                ).tolist()
-                + [self.output_dim[0]],
+                    ).tolist() + [self.output_dim[0]],
                 cnn_layer=nn.ConvTranspose2d,
                 layer_args=[
                     {"kernel_size": 4, "stride": 2, "padding": 1, "bias": layer_norm_cls == nn.Identity}
-                    for _ in range(stages - 1)
-                ]
-                + [{"kernel_size": 4, "stride": 2, "padding": 1}],
+                    for _ in range(stages - 1)]+ [{"kernel_size": 4, "stride": 2, "padding": 1}],
                 activation=[activation for _ in range(stages - 1)] + [None],
                 norm_layer=[layer_norm_cls for _ in range(stages - 1)] + [None],
                 norm_args=[
                     {**layer_norm_kw, "normalized_shape": (2 ** (stages - i - 2)) * channels_multiplier}
-                    for i in range(stages - 1)
-                ]
-                + [None],
+                    for i in range(stages - 1)] + [None],
+                final_sigmoid=final_sigmoid,
             ),
-        )
+        ]
+        # if final_sigmoid:
+        #     layers_list.append(nn.Sigmoid())
+        self.model = nn.Sequential(*layers_list)
 
     def forward(self, latent_states: Tensor) -> Dict[str, Tensor]:
         cnn_out = cnn_forward(self.model, latent_states, (latent_states.shape[-1],), self.output_dim)
@@ -966,7 +966,6 @@ class CEM(nn.Module):
                         self.concept_bins[c])
                      ]))
 
-
         self.concept_context_generators.append(
         torch.nn.Sequential(*[
             torch.nn.Linear(self.input_size,self.emb_size),
@@ -1014,7 +1013,6 @@ class CEM(nn.Module):
                 if concept_probs == None:
                     concept_probs=prob_gumbel
                     all_logits=logits
-                    # import pdb; pdb.set_trace()
                     expanded_logits = logits.unsqueeze(-2)
                 else:
                     concept_probs=torch.cat((concept_probs,prob_gumbel),-1)  # List of probabilities
@@ -1027,7 +1025,6 @@ class CEM(nn.Module):
                 else:
                     non_concept_latent= torch.cat((non_concept_latent,context),-1)
 
-        # import pdb; pdb.set_trace()
         latent = torch.cat((concept_probs,all_concept_latent,non_concept_latent),-1)
         return latent, expanded_logits, concept_probs[...,::2], all_concept_latent, non_concept_latent, all_pos_concept_latent
 
@@ -1056,10 +1053,10 @@ class CBWM(WorldModel):
         observation_model: _FabricModule,
         reward_model: _FabricModule,
         continue_model: Optional[_FabricModule],
-        cem: Optional[_FabricModule] = None,
+        cbm_model: Optional[_FabricModule] = None,
     ) -> None:
         super().__init__(encoder, rssm, observation_model, reward_model, continue_model)
-        self.cem = cem
+        self.cem = cbm_model
 
 
 def build_agent(
@@ -1105,8 +1102,11 @@ def build_agent(
     recurrent_state_size = world_model_cfg.recurrent_model.recurrent_state_size
     stochastic_size = world_model_cfg.stochastic_size * world_model_cfg.discrete_size
     latent_state_size = stochastic_size + recurrent_state_size
-    cem_latent_state_size = (world_model_cfg.cbm_model.n_concepts + 1) * world_model_cfg.cbm_model.emb_size + \
-        sum(world_model_cfg.cbm_model.concept_bins)
+    if world_model_cfg.cbm_model.use_cbm is True:
+        model_latent_state_size = (world_model_cfg.cbm_model.n_concepts + 1) * world_model_cfg.cbm_model.emb_size + \
+            sum(world_model_cfg.cbm_model.concept_bins)
+    else:
+        model_latent_state_size = latent_state_size
 
     # Define models
     cnn_stages = int(np.log2(cfg.env.screen_size) - np.log2(4))
@@ -1201,13 +1201,14 @@ def build_agent(
             keys=cfg.algo.cnn_keys.decoder,
             output_channels=[int(np.prod(obs_space[k].shape[:-2])) for k in cfg.algo.cnn_keys.decoder],
             channels_multiplier=world_model_cfg.observation_model.cnn_channels_multiplier,
-            latent_state_size=cem_latent_state_size,
+            latent_state_size=model_latent_state_size,
             cnn_encoder_output_dim=cnn_encoder.output_dim,
             image_size=obs_space[cfg.algo.cnn_keys.decoder[0]].shape[-2:],
             activation=hydra.utils.get_class(world_model_cfg.observation_model.cnn_act),
             layer_norm_cls=hydra.utils.get_class(world_model_cfg.observation_model.cnn_layer_norm.cls),
             layer_norm_kw=world_model_cfg.observation_model.mlp_layer_norm.kw,
             stages=cnn_stages,
+            final_sigmoid=world_model_cfg.observation_model.final_sigmoid,
         )
         if cfg.algo.cnn_keys.decoder is not None and len(cfg.algo.cnn_keys.decoder) > 0
         else None
@@ -1216,7 +1217,7 @@ def build_agent(
         MLPDecoder(
             keys=cfg.algo.mlp_keys.decoder,
             output_dims=[obs_space[k].shape[0] for k in cfg.algo.mlp_keys.decoder],
-            latent_state_size=cem_latent_state_size,
+            latent_state_size=model_latent_state_size,
             mlp_layers=world_model_cfg.observation_model.mlp_layers,
             dense_units=world_model_cfg.observation_model.dense_units,
             activation=hydra.utils.get_class(world_model_cfg.observation_model.dense_act),
@@ -1230,7 +1231,7 @@ def build_agent(
 
     reward_ln_cls = hydra.utils.get_class(world_model_cfg.reward_model.layer_norm.cls)
     reward_model = MLP(
-        input_dims=cem_latent_state_size,
+        input_dims=model_latent_state_size,
         output_dim=world_model_cfg.reward_model.bins,
         hidden_sizes=[world_model_cfg.reward_model.dense_units] * world_model_cfg.reward_model.mlp_layers,
         activation=hydra.utils.get_class(world_model_cfg.reward_model.dense_act),
@@ -1245,7 +1246,7 @@ def build_agent(
 
     discount_ln_cls = hydra.utils.get_class(world_model_cfg.discount_model.layer_norm.cls)
     continue_model = MLP(
-        input_dims=cem_latent_state_size,
+        input_dims=model_latent_state_size,
         output_dim=1,
         hidden_sizes=[world_model_cfg.discount_model.dense_units] * world_model_cfg.discount_model.mlp_layers,
         activation=hydra.utils.get_class(world_model_cfg.discount_model.dense_act),
@@ -1286,7 +1287,7 @@ def build_agent(
 
     actor_cls = hydra.utils.get_class(cfg.algo.actor.cls)
     actor: Actor | MinedojoActor = actor_cls(
-        latent_state_size=cem_latent_state_size,
+        latent_state_size=model_latent_state_size,
         actions_dim=actions_dim,
         is_continuous=is_continuous,
         init_std=actor_cfg.init_std,
@@ -1303,7 +1304,7 @@ def build_agent(
 
     critic_ln_cls = hydra.utils.get_class(critic_cfg.layer_norm.cls)
     critic = MLP(
-        input_dims=cem_latent_state_size,
+        input_dims=model_latent_state_size,
         output_dim=critic_cfg.bins,
         hidden_sizes=[critic_cfg.dense_units] * critic_cfg.mlp_layers,
         activation=hydra.utils.get_class(critic_cfg.dense_act),
@@ -1333,10 +1334,26 @@ def build_agent(
     # Load models from checkpoint
     if world_model_state:
         world_model.load_state_dict(world_model_state)
+        # if world_model_cfg.cbm_model.use_cbm is True:
+        #     world_model.reward_model.model[-1].apply(uniform_init_weights(0.0))
     if actor_state:
         actor.load_state_dict(actor_state)
     if critic_state:
         critic.load_state_dict(critic_state)
+
+    # Finetuning specifics
+    if cfg.finetuning:
+        for model_name, model_attr in cfg.finetuning.weights.items():
+            if model_attr['freeze'] or model_attr['reset']:
+                # import pdb; pdb.set_trace()
+                model = locals()[model_name]
+                if model_attr['freeze']:
+                    for param in model.parameters():
+                        param.requires_grad = False
+                if model_attr['reset']:
+                    model.apply(init_weights)
+                    if cfg.algo.hafner_initialization:
+                        model.model[-1].apply(uniform_init_weights(1.0))
 
     # Create the player agent
     fabric_player = get_single_device_fabric(fabric)
