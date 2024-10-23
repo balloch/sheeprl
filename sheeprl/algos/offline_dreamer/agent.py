@@ -689,7 +689,7 @@ class PlayerODV3(nn.Module):
         )
         latent = torch.cat((self.stochastic_state, self.recurrent_state), -1)
         if self.cem is not None:
-            latent, _, _, _, _ = self.cem(latent)
+            latent, _, _, _, _, _ = self.cem(latent)
         actions, _ = self.actor(latent, greedy, mask)
         self.actions = torch.cat(actions, -1)
         return actions
@@ -975,6 +975,7 @@ class CEM(nn.Module):
         pass
         non_concept_latent=None
         all_concept_latent=None
+        all_pos_concept_latent=None
         concept_probs=None
         all_logits=None
         for c in range(self.n_concepts+1):
@@ -995,11 +996,19 @@ class CEM(nn.Module):
                         concept_latent = temp_concept_latent
                     else:
                         concept_latent = concept_latent+ temp_concept_latent
+                    if i==1:
+                        pos_concept_latent = temp_concept_latent
+                        pos_concept_latent = pos_concept_latent.permute(1,2,0)
                 concept_latent = concept_latent.permute(1,2,0)
                 if all_concept_latent== None:
                     all_concept_latent=concept_latent
                 else:
                     all_concept_latent= torch.cat((all_concept_latent,concept_latent),-1)
+                
+                if all_pos_concept_latent == None:
+                    all_pos_concept_latent=pos_concept_latent
+                else:
+                    all_pos_concept_latent= torch.cat((all_pos_concept_latent,pos_concept_latent),-1)
 
                 if concept_probs == None:
                     concept_probs=prob_gumbel
@@ -1017,7 +1026,7 @@ class CEM(nn.Module):
                     non_concept_latent= torch.cat((non_concept_latent,context),-1)
 
         latent = torch.cat((concept_probs,all_concept_latent,non_concept_latent),-1)
-        return latent, expanded_logits, concept_probs[...,::2], all_concept_latent, non_concept_latent
+        return latent, expanded_logits, concept_probs[...,::2], all_concept_latent, non_concept_latent, all_pos_concept_latent
 
     def sample_latent(self, latent_shape) -> torch.Tensor:
         latent = torch.randn(latent_shape)

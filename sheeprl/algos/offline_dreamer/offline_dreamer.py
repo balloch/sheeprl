@@ -122,8 +122,8 @@ def dynamic_learning(
     if isinstance(world_model, CBWM):
         # print("DYNAMIC LEARNING!!!!!!!!!")
         random_latent = world_model.cem.sample_latent(list(latent_states.size()))
-        latent_states, concept_logits, concept_probs, real_concept_latent, real_non_concept_latent = world_model.cem(latent_states)
-        _, _, _, rand_concept_latent, rand_non_concept_latent = world_model.cem(random_latent)
+        latent_states, concept_logits, concept_probs, real_concept_latent, real_non_concept_latent, real_pos_concept_latent = world_model.cem(latent_states)
+        _, _, _, rand_concept_latent, rand_non_concept_latent, _ = world_model.cem(random_latent)
         if data.get("targets") is not None:
             target_concepts = data["targets"]
         else:
@@ -133,6 +133,7 @@ def dynamic_learning(
                     "concept_probs":concept_probs,
                     "real_concept_latent":real_concept_latent,  # This is the stuff we are comparing
                     "real_non_concept_latent":real_non_concept_latent,
+                    "real_pos_concept_latent":real_pos_concept_latent,
                     "rand_concept_latent":rand_concept_latent,
                     "rand_non_concept_latent":rand_non_concept_latent}
     return latent_states, priors_logits, posteriors_logits, posteriors, recurrent_states, cem_data
@@ -156,7 +157,7 @@ def behaviour_learning(
     imagined_latent_state = torch.cat((imagined_prior, recurrent_state), -1)
     if isinstance(world_model, CBWM):
         # print("BEHAVIOR LEARNING!!!!!!!!!")
-        imagined_latent_state, _, _, _, _ = world_model.cem(imagined_latent_state)
+        imagined_latent_state, _, _, _, _, _ = world_model.cem(imagined_latent_state)
 
     imagined_trajectories = torch.empty(
         horizon + 1,
@@ -193,7 +194,7 @@ def behaviour_learning(
         imagined_prior = imagined_prior.view(1, -1, stoch_state_size)
         imagined_latent_state = torch.cat((imagined_prior, recurrent_state), -1)
         if isinstance(world_model, CBWM):
-            imagined_latent_state, _, _, _, _ = world_model.cem(imagined_latent_state)
+            imagined_latent_state, _, _, _, _, _ = world_model.cem(imagined_latent_state)
 
         imagined_trajectories[i] = imagined_latent_state
         actions_list, _ = actor(imagined_latent_state.detach())
@@ -611,6 +612,7 @@ def validate_wm(
     aggregator: MetricAggregator | None,
     cfg: Dict[str, Any],
     compiled_dynamic_learning: Callable,
+    save_embeddings: str = '',
     val_aggregator: MetricAggregator | None = None,
 ) -> None:
     """Runs one-step update of the agent.
@@ -659,6 +661,10 @@ def validate_wm(
         2,
         is_first_dummy_tensor.shape[0]//2,
         *is_first_dummy_tensor.shape[1:]).permute(0,2,1,).unsqueeze(-1).to(device)
+
+    target_list = []
+    pos_emb_list = []
+    predicted_list = []
 
     for val_idx, data in tqdm(enumerate(dataloader), unit="batch", total=len(dataloader), leave=False):
         for key, v in data.items():
@@ -724,6 +730,13 @@ def validate_wm(
 
             # Binarize predictions (multi-hot)
             predicted = (concept_probs >= 0.5).float()
+            
+            # get concept embeddings
+            if save_embeddings:
+                target_list.append(target_concepts)
+                pos_emb_list.append(cem_data['real_pos_concept_latent'])
+                predicted_list.append(predicted)
+
 
             # True Positives (TP), False Positives (FP), False Negatives (FN)
             TP = (predicted * target_concepts).sum(dim=(0, 1))  # Sum over batch and sequence dimension
@@ -756,7 +769,6 @@ def validate_wm(
                 'accuracy': concept_accuracy.mean(),
                 'f1_score': concept_f1_score.mean()
             }
-
         # # Compute the distribution over the reconstructed observations
         # po = {
         #     k: MSEDistribution(reconstructed_obs[k], dims=len(reconstructed_obs[k].shape[2:]))
@@ -832,6 +844,46 @@ def validate_wm(
             # tqdm.write(f"Val/{key}: {np.stack(concept_val, axis=0).mean(axis=0)}")
             tqdm.write(f"Val/{key}: {concept_val}")
 
+    if save_embeddings:
+        pos_emb_array = torch.stack(pos_emb_list).cpu().detach().numpy()
+        target_array = torch.stack(target_list).cpu().detach().numpy()
+        predicted_array = torch.stack(predicted_list).cpu().detach().numpy()
+        TP_hits = (predicted_array * target_array)
+        np.save(f"{save_embeddings}_concept_embeddings.npy", pos_emb_array)
+        np.save(f"{save_embeddings}_tp_indices.npy", TP_hits)
+        print(f"Saved at {save_embeddings}_concept_embeddings.npy and {save_embeddings}_tp_indices.npy")
+
+
+def collect_embeddings(
+    fabric,
+    model1,
+    model2,
+    dataloader,
+    actions_dim,
+    is_continuous,
+    cfg,
+    observation_space,
+    compiled_dynamic_learning,
+    env,
+    emb_save_root,
+):
+    with torch.inference_mode():
+        validate_wm(
+            fabric=fabric,
+            world_model=model1,
+            dataloader=dataloader,
+            cfg=cfg,
+            compiled_dynamic_learning=compiled_dynamic_learning,
+            save_embeddings=emb_save_root + '/model1',
+        )
+        validate_wm(
+            fabric=fabric,
+            world_model=model2,
+            dataloader=dataloader,
+            cfg=cfg,
+            compiled_dynamic_learning=compiled_dynamic_learning,
+            save_embeddings=emb_save_root + '/model2',
+        )
 
 @register_algorithm()
 def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = None) -> None:
@@ -1096,7 +1148,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                                 axis=-1,
                             )
                     else:
-                        # import pdb; pdb.set_trace() # TODO what does prepare_obs do?
                         torch_obs = prepare_obs(fabric, obs, cnn_keys=cfg.algo.cnn_keys.encoder, num_envs=cfg.env.num_envs)
                         mask = {k: v for k, v in torch_obs.items() if k.startswith("mask")}
                         if len(mask) == 0:
@@ -1343,7 +1394,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                         state=state,
                         replay_buffer=rb if cfg.buffer.checkpoint else None,
                     )
-
             ## Validate Model Phase
             if (cfg.validate.every > 0 \
                     and train_step - last_validate >= cfg.validate.every \
@@ -1360,7 +1410,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                                 aggregator=aggregator,
                                 cfg=cfg,
                                 compiled_dynamic_learning=compiled_dynamic_learning,
-                                save_obs=cfg.val_video,
                                 # val_aggregator=val_aggregator,
                                 )
 
@@ -1390,6 +1439,192 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                 last_validate = train_step
 
         envs.close()
+
+    elif cfg.collect_embeddings:
+        state2 = fabric.load(pathlib.Path(cfg.checkpoint.pretrain_ckpt_path2))
+
+        ## Environment setup
+        vectorized_env = gym.vector.SyncVectorEnv if cfg.env.sync_env else gym.vector.AsyncVectorEnv
+        envs = vectorized_env(
+            [
+                partial(
+                    RestartOnException,
+                    make_env(
+                        cfg,
+                        cfg.seed + rank * cfg.env.num_envs + i,
+                        rank * cfg.env.num_envs,
+                        log_dir if rank == 0 else None,
+                        "train",
+                        vector_env_idx=i,
+                    ),
+                )
+                for i in range(cfg.env.num_envs)
+            ]
+        )
+
+        libero_folder = get_libero_path("datasets")
+        bddl_folder = get_libero_path("bddl_files")
+
+        task_order = 0  # Default task order
+        benchmark_name = "libero_90" # TODO add to config can be from {"libero_spatial", "libero_object", "libero_goal", "libero_10"}
+        benchmark = get_benchmark(benchmark_name)(task_order)
+        obs_modality = {'rgb': ['agentview_rgb']} #, 'low_dim': [ 'joint_states']}
+
+        datasets, descriptions, task_concepts = get_datasets_from_benchmark(
+            benchmark=benchmark,
+            libero_folder=libero_folder,
+            seq_len=cfg.algo.per_rank_sequence_length,
+            obs_modality=obs_modality
+            )
+        n_demos = [data.n_demos for data in datasets]
+        n_sequences = [data.total_num_sequences for data in datasets]
+
+        # Create Ratio class
+        ratio = Ratio(cfg.algo.replay_ratio, pretrain_steps=cfg.algo.per_rank_pretrain_steps)
+        if cfg.checkpoint.resume_from:
+            ratio.load_state_dict(state["ratio"])
+
+        if cfg.algo.supervised_concepts:
+            temp_datas = []
+            for dataset, task_concept in zip(datasets, task_concepts):
+                temp_datas.append(CombinedDictDataset(dataset, task_concept))
+            datasets = temp_datas
+        concat_dataset = ConcatDataset(datasets)
+        action_sample = concat_dataset[0]['actions']
+        if isinstance(action_sample, np.ndarray):
+            action_space = gym.spaces.Box(
+                low=-1.0, #np.min(action_sample),
+                high=1.0, #np.max(action_sample),
+                shape=action_sample[0].shape,
+                dtype=action_sample.dtype
+            )
+        obs_sample = concat_dataset[0]['obs']  # Assuming dataset[i][0] is the observation
+        if isinstance(obs_sample, dict):
+            obs_space_dict = {}
+            for k, v in obs_sample.items():
+                if 'image' in k or 'rgb' in k:
+                    obs_space_dict[k] = gym.spaces.Box(
+                        low=0,
+                        high=1.0,
+                        shape=(3, cfg.env.screen_size, cfg.env.screen_size),
+                        dtype=v.dtype
+                    )
+                else:
+                    obs_space_dict[k] = gym.spaces.Box(
+                        low=-1.0,
+                        high=1.0,
+                        shape=v[0].shape,
+                        dtype=v.dtype
+                    )
+            observation_space = gym.spaces.Dict(obs_space_dict)
+
+        eval_transforms_dict = {
+            'agentview_rgb': v2.Compose([
+                # v2.ToImage(),
+                v2.Resize((cfg.env.screen_size, cfg.env.screen_size)),
+                # v2.Pad(4,padding_mode=cfg.val_transforms.Pad.pad_type),
+                # v2.RandomCrop(cfg.env.screen_size),
+                # v2.ToTensor(),
+            ])}
+        eval_dataset = TransformedDictDataset(
+            dataset=concat_dataset,
+            transform_dict=eval_transforms_dict
+            )
+        eval_dataloader = DataLoader(
+            eval_dataset,
+            batch_size=cfg.algo.per_rank_batch_size, # replay_ratio=0.5 This is hacky, but Ratio is confusing
+            shuffle=False,
+            num_workers=0,
+            pin_memory=False,
+            drop_last=True,
+            )
+
+        is_continuous = isinstance(action_space, gym.spaces.Box)
+        is_multidiscrete = isinstance(action_space, gym.spaces.MultiDiscrete)
+        actions_dim = tuple(
+            action_space.shape if is_continuous else (action_space.nvec.tolist() if is_multidiscrete else [action_space.n])
+        )
+        clip_rewards_fn = lambda r: np.tanh(r) if cfg.env.clip_rewards else r
+        if not isinstance(observation_space, gym.spaces.Dict):
+            raise RuntimeError(f"Unexpected observation type, should be of type Dict, got: {observation_space}")
+
+        if (
+            len(set(cfg.algo.cnn_keys.encoder).intersection(set(cfg.algo.cnn_keys.decoder))) == 0
+            and len(set(cfg.algo.mlp_keys.encoder).intersection(set(cfg.algo.mlp_keys.decoder))) == 0
+        ):
+            raise RuntimeError("The CNN keys or the MLP keys of the encoder and decoder must not be disjointed")
+        if len(set(cfg.algo.cnn_keys.decoder) - set(cfg.algo.cnn_keys.encoder)) > 0:
+            raise RuntimeError(
+                "The CNN keys of the decoder must be contained in the encoder ones. "
+                f"Those keys are decoded without being encoded: {list(set(cfg.algo.cnn_keys.decoder))}"
+            )
+        if len(set(cfg.algo.mlp_keys.decoder) - set(cfg.algo.mlp_keys.encoder)) > 0:
+            raise RuntimeError(
+                "The MLP keys of the decoder must be contained in the encoder ones. "
+                f"Those keys are decoded without being encoded: {list(set(cfg.algo.mlp_keys.decoder))}"
+            )
+        if cfg.metric.log_level > 0:
+            fabric.print("Encoder CNN keys:", cfg.algo.cnn_keys.encoder)
+            fabric.print("Encoder MLP keys:", cfg.algo.mlp_keys.encoder)
+            fabric.print("Decoder CNN keys:", cfg.algo.cnn_keys.decoder)
+            fabric.print("Decoder MLP keys:", cfg.algo.mlp_keys.decoder)
+        obs_keys = cfg.algo.cnn_keys.encoder + cfg.algo.mlp_keys.encoder
+
+        # Compile dynamic_learning method
+        compiled_dynamic_learning = torch.compile(dynamic_learning, **cfg.algo.compile_dynamic_learning)
+
+        # Compile behaviour_learning method
+        compiled_behaviour_learning = torch.compile(behaviour_learning, **cfg.algo.compile_behaviour_learning)
+
+        # Compile compute_lambda_values method
+        compiled_compute_lambda_values = torch.compile(compute_lambda_values, **cfg.algo.compile_compute_lambda_values)
+
+        world_model, actor, critic, target_critic, player = build_agent(
+            fabric,
+            actions_dim,
+            is_continuous,
+            cfg,
+            observation_space,
+            state["world_model"] if loaded_params else None,
+            state["actor"] if loaded_params else None,
+            state["critic"] if loaded_params else None,
+            state["target_critic"] if loaded_params else None,
+        )
+
+        world_model2, actor2, critic2, target_critic2, player2 = build_agent(
+            fabric,
+            actions_dim,
+            is_continuous,
+            cfg,
+            observation_space,
+            state2["world_model"] if loaded_params else None,
+            state2["actor"] if loaded_params else None,
+            state2["critic"] if loaded_params else None,
+            state2["target_critic"] if loaded_params else None,
+        )
+
+        moments = Moments(
+            cfg.algo.actor.moments.decay,
+            cfg.algo.actor.moments.max,
+            cfg.algo.actor.moments.percentile.low,
+            cfg.algo.actor.moments.percentile.high,
+        )
+        if loaded_params:
+            moments.load_state_dict(state["moments"])
+
+        collect_embeddings(
+            fabric=fabric, 
+            model1=world_model,
+            model2=world_model2,
+            dataloader=eval_dataloader,
+            actions_dim=actions_dim,
+            is_continuous=is_continuous,
+            cfg=cfg,
+            observation_space=observation_space,
+            compiled_dynamic_learning=compiled_dynamic_learning,
+            env=envs,
+            emb_save_root=cfg.collect_embeddings.emb_save_root,
+        )
 
     else:  ## OFFLINE LEARNING
 
@@ -1463,8 +1698,8 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
         train_transforms_dict = {
             'agentview_rgb': v2.Compose([
                 v2.Resize((cfg.env.screen_size, cfg.env.screen_size)),
-                v2.Pad(4,padding_mode=cfg.train_transforms.Pad.pad_type),
-                v2.RandomCrop(cfg.env.screen_size),
+                # v2.Pad(4,padding_mode=cfg.train_transforms.Pad.pad_type),
+                # v2.RandomCrop(cfg.env.screen_size),
                 # v2.ToTensor(),
             ]) }
         train_dataset = TransformedDictDataset(
@@ -1477,9 +1712,9 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             train_dataset,
             batch_size=cfg.algo.per_rank_batch_size * 2, # replay_ratio=0.5 This is hacky, but Ratio is confusing
             shuffle=True,
+            pin_memory=False,
             num_workers=0, #4, # This doesn't work because while val is being executed, the workers time out
             # persistent_workers=True,
-            # pin_memory=True,
             drop_last=True,
             # prefetch_factor=10,
             # multiprocessing_context='fork',
@@ -1735,11 +1970,25 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                             cumulative_per_rank_gradient_steps += 1
                         train_step += world_size
 
+#                 if True:
+#                     print("VALIDATE")
+#                     print(f"policy_step={policy_step}, last_log={last_log}")
+
+#                     # Validate on validation set
+#                     with torch.inference_mode() and timer("Time/train_time", SumMetric, sync_on_compute=cfg.metric.sync_on_compute):
+#                         validate_wm(
+#                             fabric=fabric,
+#                             world_model=world_model,
+#                             dataloader=val_dataloader,
+#                             aggregator=aggregator,
+#                             cfg=cfg,
+#                             compiled_dynamic_learning=compiled_dynamic_learning,
+#                             # val_aggregator=val_aggregator,
+#                             )
+#                     print('val finished')
                 ## Log metrics Phase
                 if cfg.metric.log_level > 0 and (train_step - last_log >= cfg.metric.log_every or loop_iter_num == total_iters):
                     tqdm.write(f"Logging at train_step={train_step} (last_log={last_log})")
-                    # print(f"train_step={train_step}, last_log={last_log}")
-
                     # Sync distributed metrics
                     if aggregator and not aggregator.disabled:
                         metrics_dict = aggregator.compute()
