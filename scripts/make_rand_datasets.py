@@ -163,7 +163,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--bddl-files",
         type=str,
-        default='/home/balloch/code/LIBERO/libero/libero/bddl_files/libero_10'
+        default='/home/balloch/code/LIBERO/libero/libero/bddl_files/libero_90/STUDY_SCENE3_pick_up_the_white_mug_and_place_it_to_the_right_of_the_caddy.bddl'
     )
     parser.add_argument(
         "--directory",
@@ -201,6 +201,12 @@ if __name__ == "__main__":
         default=["Panda"],
         help="Which robot(s) to use in the env",
     )
+    parser.add_argument(
+        "--controller",
+        type=str,
+        default="OSC_POSE",
+        help="Choice of controller. Can be 'IK_POSE' or 'OSC_POSE'",
+    )
 
     # parser.add_argument(
     #     "--save_obs_keys",
@@ -222,34 +228,44 @@ if __name__ == "__main__":
     args = parser.parse_args()
     # args.save_obs_keys = True
 
+    if not os.path.exists(args.directory):
+        os.makedirs(args.directory)
+
     if os.path.isdir(args.bddl_files):
         bddls = glob(args.bddl_files + '/*.bddl')
     else:
         bddls = [args.bddl_files]
 
+    controller_config = load_controller_config(default_controller=args.controller)
+
+    # Create argument configuration
+    config = {
+        "robots": args.robots,
+        "controller_configs": controller_config,
+    }
+
     for bddl in bddls:
         assert os.path.exists(bddl)
         print(bddl)
-        # Check if the directory already exists
-        skip_directory = f"{args.policy}_{os.path.basename(bddl)[:-5]}"
-        existing_dirs = [d for d in os.listdir(args.directory) if os.path.isdir(os.path.join(args.directory, d))]
-        if any(skip_directory in d for d in existing_dirs):
-            print(f"Directory {skip_directory} already exists as a substring in an existing directory. Skipping.")
-            continue
+        # # Check if the directory already exists
+        # skip_directory = f"{args.policy}_{os.path.basename(bddl)[:-5]}"
+        # existing_dirs = [d for d in os.listdir(args.directory) if os.path.isdir(os.path.join(args.directory, d))]
+        # if any(skip_directory in d for d in existing_dirs):
+        #     print(f"Directory {skip_directory} already exists as a substring in an existing directory. Skipping.")
+        #     continue
 
         problem_info = BDDLUtils.get_problem_info(bddl)
         # Check if we're using a multi-armed environment and use env_configuration argument if so
-        config = {}
-
-        # Create environment
         problem_name = problem_info["problem_name"]
         domain_name = problem_info["domain_name"]
         if "TwoArm" in problem_name:
             config["env_configuration"] = args.config
+
+        # Create environment
         env = TASK_MAPPING[problem_name](
             bddl_file_name=bddl,
             has_renderer=False,
-            robots=args.robots,
+            # robots=args.robots,
             has_offscreen_renderer=True,
             ignore_done=True,
             use_camera_obs=True,
@@ -303,3 +319,4 @@ if __name__ == "__main__":
             remove_directory=remove_directory,
             # save_obs_keys=args.save_obs_keys,
         )
+    env.close()

@@ -34,6 +34,7 @@ from lightning.fabric.wrappers import _FabricModule
 from torch import Tensor
 from torch.distributions import Distribution, Independent, OneHotCategorical
 from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LambdaLR
 from torchmetrics import SumMetric, MeanMetric
 import wandb
 
@@ -730,7 +731,7 @@ def validate_wm(
 
             # Binarize predictions (multi-hot)
             predicted = (concept_probs >= 0.5).float()
-            
+
             # get concept embeddings
             if save_embeddings:
                 target_list.append(target_concepts)
@@ -932,6 +933,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
     log_dir = get_log_dir(fabric, cfg.root_dir, cfg.run_name)
     fabric.print(f"Log dir: {log_dir}")
 
+    # Standard RL training
     if cfg.algo.offline is False:
 
         # Environment setup
@@ -1013,7 +1015,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
         )
         actor_optimizer = hydra.utils.instantiate(cfg.algo.actor.optimizer, params=actor.parameters(), _convert_="all")
         critic_optimizer = hydra.utils.instantiate(cfg.algo.critic.optimizer, params=critic.parameters(), _convert_="all")
-        if loaded_params:
+        if loaded_params and cfg.checkpoint.resume_from is not None:
             world_optimizer.load_state_dict(state["world_optimizer"])
             actor_optimizer.load_state_dict(state["actor_optimizer"])
             critic_optimizer.load_state_dict(state["critic_optimizer"])
@@ -1026,7 +1028,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             cfg.algo.actor.moments.percentile.low,
             cfg.algo.actor.moments.percentile.high,
         )
-        if loaded_params:
+        if loaded_params and cfg.checkpoint.resume_from is not None:
             moments.load_state_dict(state["moments"])
 
         if fabric.is_global_zero:
@@ -1077,6 +1079,15 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             cfg.algo.per_rank_batch_size = state["batch_size"] // fabric.world_size
             learning_starts += start_iter
             prefill_steps += start_iter
+
+        # Scheduler for the optimizer
+        if cfg.algo.world_model.opt_warmup:
+            if cfg.algo.world_model.opt_warmup.type == "linear":
+                # Increases the LR multiplier from 0 to 1 evenly over the number of steps = total steps / warmup_ratio
+                lambda_func = lambda step: min(1.0, step / (cfg.algo.world_model.opt_warmup.warmup_ratio * total_iters))
+            else:
+                raise NotImplementedError
+            lr_scheduler = LambdaLR(world_optimizer, lr_lambda=lambda_func)
 
         # Create Ratio class
         ratio = Ratio(cfg.algo.replay_ratio, pretrain_steps=cfg.algo.per_rank_pretrain_steps)
@@ -1295,6 +1306,9 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                             )
                             cumulative_per_rank_gradient_steps += 1
                         train_step += world_size
+                    # Update the learning rate
+                    if cfg.algo.world_model.opt_warmup:
+                        lr_scheduler.step()
 
             ## Log metrics Phase
             if cfg.metric.log_level > 0 and (train_step - last_log >= cfg.metric.log_every or loop_iter_num == total_iters):
@@ -1609,11 +1623,11 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             cfg.algo.actor.moments.percentile.low,
             cfg.algo.actor.moments.percentile.high,
         )
-        if loaded_params:
+        if loaded_params and cfg.checkpoint.resume_from is not None:
             moments.load_state_dict(state["moments"])
 
         collect_embeddings(
-            fabric=fabric, 
+            fabric=fabric,
             model1=world_model,
             model2=world_model2,
             dataloader=eval_dataloader,
@@ -1632,18 +1646,26 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
         bddl_folder = get_libero_path("bddl_files")
 
         task_order = 0  # Default task order
-        benchmark_name = "libero_90" # TODO add to config can be from {"libero_spatial", "libero_object", "libero_goal", "libero_10"}
-        benchmark = get_benchmark(benchmark_name)(task_order)
         obs_modality = {'rgb': ['agentview_rgb']} #, 'low_dim': [ 'joint_states']}
-
-        datasets, descriptions, task_concepts = get_datasets_from_benchmark(
-            benchmark=benchmark,
-            libero_folder=libero_folder,
-            seq_len=cfg.algo.per_rank_sequence_length,
-            obs_modality=obs_modality
-            )
+        datasets = []
+        descriptions = []
+        task_concepts = []
+        for benchmark_name in cfg.offline_dataset:
+        # benchmark_name = "libero_90" # TODO add to config can be from {"libero_spatial", "libero_object", "libero_goal", "libero_10"}
+            benchmark = get_benchmark(benchmark_name)(task_order)
+            bench_datasets, bench_descriptions, bench_task_concepts = get_datasets_from_benchmark(
+                benchmark=benchmark,
+                libero_folder=libero_folder,
+                seq_len=cfg.algo.per_rank_sequence_length,
+                obs_modality=obs_modality
+                )
+            datasets.extend(bench_datasets)
+            descriptions.extend(bench_descriptions)
+            task_concepts.extend(bench_task_concepts)
         # task_embs = get_task_embs(cfg,descriptions)
         # benchmark.set_task_embs(task_embs)
+        # import pdb; pdb.set_trace()
+
         n_demos = [data.n_demos for data in datasets]
         n_sequences = [data.total_num_sequences for data in datasets]
 
@@ -1800,7 +1822,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
         )
         actor_optimizer = hydra.utils.instantiate(cfg.algo.actor.optimizer, params=actor.parameters(), _convert_="all")
         critic_optimizer = hydra.utils.instantiate(cfg.algo.critic.optimizer, params=critic.parameters(), _convert_="all")
-        if loaded_params:
+        if loaded_params and cfg.checkpoint.resume_from is not None:
             world_optimizer.load_state_dict(state["world_optimizer"])
             actor_optimizer.load_state_dict(state["actor_optimizer"])
             critic_optimizer.load_state_dict(state["critic_optimizer"])
@@ -1813,7 +1835,7 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
             cfg.algo.actor.moments.percentile.low,
             cfg.algo.actor.moments.percentile.high,
         )
-        if loaded_params:
+        if loaded_params and cfg.checkpoint.resume_from is not None:
             moments.load_state_dict(state["moments"])
 
         if fabric.is_global_zero:
@@ -1878,6 +1900,15 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
 
         cumulative_per_rank_gradient_steps = 0
         loop_iter_num = start_iter
+
+        # Learning rate scheduler
+        if cfg.algo.world_model.opt_warmup:
+            if cfg.algo.world_model.opt_warmup.type == "linear":
+                # Increases the LR multiplier from 0 to 1 evenly over the number of steps = total steps / warmup_ratio
+                lambda_func = lambda step: min(1.0, step / (cfg.algo.world_model.opt_warmup.warmup_ratio * total_iters))
+            else:
+                raise NotImplementedError
+            lr_scheduler = LambdaLR(world_optimizer, lr_lambda=lambda_func)
 
         init_dl = iter(train_dataloader)
         init_batch = next(init_dl)
@@ -1969,6 +2000,9 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                             )
                             cumulative_per_rank_gradient_steps += 1
                         train_step += world_size
+                    # Update the learning rate
+                    if cfg.algo.world_model.opt_warmup:
+                        lr_scheduler.step()
 
 #                 if True:
 #                     print("VALIDATE")
@@ -2107,7 +2141,6 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                     break
             else:  # Continue if the inner loop wasn't broken
                 continue
-                # break the outer loop
 
             if cfg.do_profile:
                 pyintsession = profiler.stop()

@@ -1004,7 +1004,7 @@ class CEM(nn.Module):
                     all_concept_latent=concept_latent
                 else:
                     all_concept_latent= torch.cat((all_concept_latent,concept_latent),-1)
-                
+
                 if all_pos_concept_latent == None:
                     all_pos_concept_latent=pos_concept_latent
                 else:
@@ -1347,13 +1347,17 @@ def build_agent(
             if model_attr['freeze'] or model_attr['reset']:
                 # import pdb; pdb.set_trace()
                 model = locals()[model_name]
+                # import pdb; pdb.set_trace()
                 if model_attr['freeze']:
                     for param in model.parameters():
                         param.requires_grad = False
                 if model_attr['reset']:
                     model.apply(init_weights)
                     if cfg.algo.hafner_initialization:
-                        model.model[-1].apply(uniform_init_weights(1.0))
+                        if model_name == 'actor':
+                            model.mlp_heads.apply(uniform_init_weights(1.0))
+                        else:
+                            model.model[-1].apply(uniform_init_weights(1.0))
 
     # Create the player agent
     fabric_player = get_single_device_fabric(fabric)

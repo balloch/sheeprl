@@ -5,7 +5,7 @@ defaults:
 # Override from `default` config
 id: ${env.wrapper.robot}_${env.wrapper.env_name}
 action_repeat: 2
-max_episode_steps: 1000
+max_episode_steps: 500
 sync_env: True
 env_stats:
   Rewards/reach_avg_ep:

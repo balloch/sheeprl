@@ -18,6 +18,9 @@ validate:
   val_transforms: null
 
 # Offline Training
+offline_dataset:
+  - libero_90
+  - rand_libero_90
 train_transforms:
   Pad:
     pad: 4

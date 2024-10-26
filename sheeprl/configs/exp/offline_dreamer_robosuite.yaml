@@ -11,7 +11,7 @@ seed: 5
 
 # # Environment
 env:
-  max_episode_steps: 1000
+  max_episode_steps: 500
   wrapper:
     supervised_concepts: 'bddl_objects' #list of: 'bddl_objects' and/or 'joint_positions'
 
