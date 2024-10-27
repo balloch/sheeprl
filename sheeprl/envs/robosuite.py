@@ -613,7 +613,7 @@ class RobosuiteWrapper(gym.Wrapper):
                 reward += r_lift + place_reward
             
         # Max reward is 6
-        reward /= 6
+        # reward /= 6
             
         return reward, reach_reward, 4 if is_touching and is_open else 0, r_lift, place_reward 
 
