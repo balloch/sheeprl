@@ -607,10 +607,13 @@ class RobosuiteWrapper(gym.Wrapper):
         r_lift = distance_lifted > self._lift_threshold
         
         # As per the isaac cube stack definition
-        if is_touching and is_open:
+        if (is_touching and is_open) or target_to_goal_dist < 0.02:
             reward = 4
             if r_lift:
                 reward += r_lift + place_reward
+            
+        # Max reward is 6
+        reward /= 6
             
         return reward, reach_reward, 4 if is_touching and is_open else 0, r_lift, place_reward 
 
