@@ -309,11 +309,11 @@ class RobosuiteWrapper(gym.Wrapper):
         reward = time_step[1]
         # Final reward scaling on truncation
         if time_step[2]:
-            reward = reward * self.ep_length
+            reward = reward * self.horizon
         # try:
         self.step_returns['extrinsic'][self.ep_length] = reward
         
-        reward = self.compute_reward()
+        reward += self.compute_reward()
         
         # except Exception as e:
         #     import pdb; pdb.set_trace()
@@ -604,12 +604,14 @@ class RobosuiteWrapper(gym.Wrapper):
         distance_lifted = self.env.sim.data.body_xpos[self._target_object['body_geom_id']][2] - self._initial_distances['object_z']
         distance_lifted = max(distance_lifted, 0) # Safeguard for dropping the object below initial position
         # z : distance lifted
-        r_lift = distance_lifted > self._lift_threshold
+        is_lifted = distance_lifted > self._lift_threshold
+        r_lift = 0.5 * np.tanh(10 * distance_lifted - 1.1) + 0.5
         
+        # print(target_to_goal_dist)
         # As per the isaac cube stack definition
         if (is_touching and is_open) or target_to_goal_dist < 0.02:
             reward = 4
-            if r_lift:
+            if is_lifted:
                 reward += r_lift + place_reward
             
         # Max reward is 6
