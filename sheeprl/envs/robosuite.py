@@ -114,6 +114,8 @@ class RobosuiteWrapper(gym.Wrapper):
             # All our scenes have one goal, so this is simplified from the PickPlace implementation
             self._setup_staged_rewards(bddl_file)
             self._update_initial_distances()
+            self._open_threshold = 0.02
+            self._lift_threshold = 0.04
 
         if initial_joint_positions:
             self.env.robots[0].set_robot_joint_positions(self.initial_joint_positions)
@@ -176,6 +178,7 @@ class RobosuiteWrapper(gym.Wrapper):
 
         # set the reward range
         self._reward_range = (0, self.env.reward_scale)  # self.reward_range
+        
 
         # create observation space
         self._observation_space = spaces.Dict(obs_space)
@@ -306,11 +309,11 @@ class RobosuiteWrapper(gym.Wrapper):
         reward = time_step[1]
         # Final reward scaling on truncation
         if time_step[2]:
-            reward = reward * self.ep_length
+            reward = reward * self.horizon
         # try:
         self.step_returns['extrinsic'][self.ep_length] = reward
         
-        reward = self.compute_reward()
+        reward += self.compute_reward()
         
         # except Exception as e:
         #     import pdb; pdb.set_trace()
@@ -498,10 +501,16 @@ class RobosuiteWrapper(gym.Wrapper):
         # If statement to prevent reward from increasing if dist > 1
         r_reach = max(0, min(r_reach, reach_mult)) if eef_to_target_dist <= 1 else 0
 
-        is_grasping = self.env._check_grasp(
-                    gripper=self.env.robots[0].gripper,
-                    object_geoms=self._target_object['object'].contact_geoms
-                )
+        is_left_contact = check_contact(self.env.sim, names[0], self._target_object['object'])
+        is_right_contact = check_contact(self.env.sim, names[1], self._target_object['object'])
+        is_touching = is_left_contact and is_right_contact
+        
+        finger1_col = self.env.sim.data.geom_xpos[self.env.sim.model.geom_name2id("gripper0_finger1_collision")]
+        finger2_col = self.env.sim.data.geom_xpos[self.env.sim.model.geom_name2id("gripper0_finger2_collision")]
+        is_open = np.linalg.norm(finger1_col - finger2_col) > 0.02 # Magic number, model starts at 0.06419 (significantly open)    
+        
+        # As per the isaac cube stack definition
+        is_grasping = is_open and is_touching
 
         # Normalized
         goal_xy = self.env.sim.data.body_xpos[self._goal_location['body_geom_id']][:2]
@@ -572,9 +581,9 @@ class RobosuiteWrapper(gym.Wrapper):
         reward = reach_reward = 2 * (1 - np.tanh(5 * eef_to_target_dist))
         
         # Grasp and place reward
-        goal_xyz = self.env.sim.data.body_xpos[self._goal_location['body_geom_id']]
-        object_xyz = self.env.sim.data.body_xpos[self._target_object['body_geom_id']]
-        target_to_goal_dist = np.linalg.norm(goal_xyz - object_xyz) / self._initial_distances['target_to_goal_xyz']
+        goal_xy = self.env.sim.data.body_xpos[self._goal_location['body_geom_id']][:2]
+        object_xy = self.env.sim.data.body_xpos[self._target_object['body_geom_id']][:2]
+        target_to_goal_dist = np.linalg.norm(goal_xy - object_xy) / self._initial_distances['target_to_goal_xy']
         
         # [0, 1]
         place_reward = 1 - np.tanh(5.0 * target_to_goal_dist)
@@ -589,13 +598,26 @@ class RobosuiteWrapper(gym.Wrapper):
         
         finger1_col = self.env.sim.data.geom_xpos[self.env.sim.model.geom_name2id("gripper0_finger1_collision")]
         finger2_col = self.env.sim.data.geom_xpos[self.env.sim.model.geom_name2id("gripper0_finger2_collision")]
-        is_open = np.linalg.norm(finger1_col - finger2_col) > 0.02 # Magic number, model starts at 0.06419 (significantly open)    
+        is_open = np.linalg.norm(finger1_col - finger2_col) > self._open_threshold # Magic number, model starts at 0.06419 (significantly open)    
         
+        # Lift reward
+        distance_lifted = self.env.sim.data.body_xpos[self._target_object['body_geom_id']][2] - self._initial_distances['object_z']
+        distance_lifted = max(distance_lifted, 0) # Safeguard for dropping the object below initial position
+        # z : distance lifted
+        is_lifted = distance_lifted > self._lift_threshold
+        r_lift = 0.5 * np.tanh(10 * distance_lifted - 1.1) + 0.5
+        
+        # print(target_to_goal_dist)
         # As per the isaac cube stack definition
-        if is_touching and is_open:
-            reward = (4 + place_reward)
+        if (is_touching and is_open) or target_to_goal_dist < 0.02:
+            reward = 4
+            if is_lifted:
+                reward += r_lift + place_reward
             
-        return reward, reach_reward, 4 if is_touching and is_open else 0, place_reward 
+        # Max reward is 6
+        # reward /= 6
+            
+        return reward, reach_reward, 4 if is_touching and is_open else 0, r_lift, place_reward 
 
     # kwargs here to keep compatibility with gym inteface
     def compute_reward(self, achieved_goal = None, desired_goal = None, info = None):
@@ -644,9 +666,8 @@ class RobosuiteWrapper(gym.Wrapper):
                     reward += r_reach
                     # print("reach")   
             elif self.reward_shaping.mode == 'nvidia':
-                dense_reward, r_reach, r_grasp, r_hover = self.nvidia_staged_rewards()
+                dense_reward, r_reach, r_grasp, r_lift, r_hover = self.nvidia_staged_rewards()
                 reward += dense_reward
-                r_lift = 0 # For consistency with logging
                 
             staged_rewards = {
                 'reach': r_reach,
