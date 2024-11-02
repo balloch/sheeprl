@@ -309,7 +309,7 @@ class RobosuiteWrapper(gym.Wrapper):
         reward = time_step[1]
         # Final reward scaling on truncation
         if time_step[2]:
-            reward = reward * self.horizon
+            reward = reward * (8 * self.reward_shaping.terminal_multiplier)
         # try:
         self.step_returns['extrinsic'][self.ep_length] = reward
         
@@ -319,9 +319,12 @@ class RobosuiteWrapper(gym.Wrapper):
         #     import pdb; pdb.set_trace()
         # if self.reward_shaping and self.bddl_file:
         #     reward += self.staged_rewards()
-        terminated = time_step[2]
-        truncated = time_step[2]
-        # terminated = truncated
+        terminated = time_step[2] and reward > 0
+        truncated = not terminated and time_step[2] and self.ep_length == self.horizon - 2 and reward == 0 # ep_length 998 means we have completed |[0, 999]| = 1000 steps
+        
+        # (done and (terminated or truncated)) or (not done)
+        assert (time_step[2] and (terminated or truncated)) or (not time_step[2])
+                
         infos = time_step[3]
         infos["discount"] = .997  # TODO: I don't know if thats correct
         infos["internal_state"] = time_step[0]
@@ -578,6 +581,7 @@ class RobosuiteWrapper(gym.Wrapper):
             return_distance=True
         ) / self._initial_distances['target_to_eef']
         
+        # [0, 2]
         reward = reach_reward = 2 * (1 - np.tanh(5 * eef_to_target_dist))
         
         # Grasp and place reward
@@ -614,8 +618,8 @@ class RobosuiteWrapper(gym.Wrapper):
             if is_lifted:
                 reward += r_lift + place_reward
             
-        # Max reward is 6
-        # reward /= 6
+        # Max reward is 8
+        # reward /= 8
             
         return reward, reach_reward, 4 if is_touching and is_open else 0, r_lift, place_reward 
 
