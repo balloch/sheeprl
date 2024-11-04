@@ -2,9 +2,12 @@
 data
 demonstration_data*
 
-# Slurm files
+# Slurm output files
 *.out
 *.err
+
+# Outputs
+*.png
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
