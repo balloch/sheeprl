@@ -159,6 +159,8 @@ world_model:
 
   # World model optimizer
   opt_warmup: null
+    # type: linear
+    # ratio: 0.01
   optimizer:
     lr: 1e-4
     eps: 1e-8

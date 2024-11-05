@@ -1,0 +1,1 @@
+exp=offline_dreamer_robosuite  algo.world_model.cbm_model.ortho_reg=0.0 algo.world_model.cbm_model.concept_reg=0.0 algo.offline=false logger@metric.logger=wandb

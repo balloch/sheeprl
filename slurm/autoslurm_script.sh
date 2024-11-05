@@ -5,9 +5,9 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=1
-#SBATCH --cpus-per-task=6
+#SBATCH --cpus-per-task=10
 #SBATCH --gpus-per-node="a40:1"
-#SBATCH --qos="short"
+#SBATCH --qos="long"
 
 
 # Initialize an array to store the arguments
@@ -26,7 +26,7 @@ for arg in "$@"; do
         start_collecting=true
         continue  # Skip adding "JOB" itself to the list
     fi
-    
+
     # Check if the current argument is the stopping value
     if [ "$arg" = "STOP" ]; then
         break
