@@ -79,7 +79,7 @@ wrapper:
   has_renderer: False
   has_offscreen_renderer: True
   use_camera_obs: True
-  use_vector_obs: False
+  use_vector_obs: True
   control_freq: 20
   action_repeat: ${env.action_repeat}
   supervised_concepts: null #options: list of: 'bddl_objects' and/or 'joint_positions'

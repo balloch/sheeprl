@@ -450,7 +450,9 @@ class RobosuiteWrapper(gym.Wrapper):
                 if obs is None or 'state' not in obs:
                     raise ValueError("obs with 'state' required for joint concepts")
                 else:
-                    self._last_concepts.extend(obs['state'])
+                    self.joint_concept_range = range(7,21) # TODO add to config
+                    self.joint_start = len(self._last_concepts)
+                    self._last_concepts.extend(obs['state'][self.joint_concept_range])
                     warnings.warn("joint_positions not tested")
             self._last_concepts = np.array(self._last_concepts)
         else:
@@ -458,8 +460,7 @@ class RobosuiteWrapper(gym.Wrapper):
                 if obs is None or 'state' not in obs:
                     raise ValueError("obs with 'state' required for joint concepts")
                 else:
-                    joint_start = len(self._last_concepts)-len(obs['state'])
-                    self._last_concepts[joint_start:]=obs['state']
+                    self._last_concepts[self.joint_start:]=obs['state'][self.joint_concept_range]
                     warnings.warn("joint_positions not tested")
 
     def get_concepts(self,obs=None):
