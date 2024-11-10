@@ -113,11 +113,15 @@ class RobosuiteWrapper(gym.Wrapper):
         super().__init__(env)
 
         obs = self.env.reset()
+        self._from_pixels = self.env.use_camera_obs
+        self._channels_first = channels_first
+        self._from_vectors = use_vector_obs  # 'robot0_proprio-state' in keys
+        obs_mod = self._get_obs(obs)
 
         # initialize self._last_concepts
         self._last_concepts = None
         if self.supervised_concepts:
-            self.update_concepts(obs)
+            self.update_concepts(obs_mod)
 
         # We need this to be here because we want the environment to exist at this point
         if not self.reward_shaping.disable and self.bddl_file:
@@ -137,8 +141,6 @@ class RobosuiteWrapper(gym.Wrapper):
         self._height = obs['agentview_image'].shape[0]
         self._width = obs['agentview_image'].shape[1]
         self.name = self.robot + "_" + type(self.env).__name__
-        self._from_pixels = self.env.use_camera_obs
-        self._channels_first = channels_first
 
         ## Convert to Gym-style
         obs_space = {}
@@ -174,8 +176,6 @@ class RobosuiteWrapper(gym.Wrapper):
         else:
             raise NotImplementedError
         self.keys = list(set(keys))
-
-        self._from_vectors = use_vector_obs  # 'robot0_proprio-state' in keys
 
         # # Get reward range
         # self.reward_range = (0, self.env.reward_scale)

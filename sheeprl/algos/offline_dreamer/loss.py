@@ -17,31 +17,42 @@ def get_concept_index(model, c):
     return start, end
 
 
-def get_concept_loss(model, predicted_concepts, target_concepts, isList=False):
+def get_concept_loss(model, predicted_concepts, target_concepts, cont_concept_idx):
     ## TODO im not even sure this is right...it seems like from the paper that the
     ## label predictor is supposed to take 2x embeddings as input and then predict
     ## n_concept labels. But here we predicting n_concept labels?
     concept_loss = 0
-    predicted_concepts = predicted_concepts.float()
+    target_dict = {}
+    if predicted_concepts['bin'] is not None:
+        predicted_concepts['bin'] = predicted_concepts['bin'].float()
+    if predicted_concepts['cont'] is not None:
+        predicted_concepts['cont'] = predicted_concepts['cont'].float()
     if target_concepts is None:
-        target_concepts = (torch.rand(predicted_concepts.size()) > 0.5) * 1  # TODO replace with actual concepts
-        target_concepts = target_concepts.to(predicted_concepts.device)
+        target_dict['bin'] = (torch.rand(predicted_concepts['bin'].size()) > 0.5) * 1  # TODO replace with actual concepts
+        target_dict['bin'] = target_dict['bin'].to(predicted_concepts['bin'].device)
+        target_dict['cont'] = torch.rand(predicted_concepts['cont'].size())
+        target_dict['cont'] = target_dict['cont'].to(predicted_concepts['cont'].device)
         print("Randomly generated target concepts")
     else:
-        target_concepts = target_concepts.unsqueeze(-1)
-        target_concepts = torch.cat((target_concepts,1-target_concepts),-1)   # To supervise the doubled concept predictions
+        target_dict['bin'] = target_concepts[..., :cont_concept_idx].unsqueeze(-1)
+        target_dict['bin'] = torch.cat((target_dict['bin'],1-target_dict['bin']),-1)   # To supervise the doubled concept predictions
+        target_dict['cont'] = target_concepts[..., cont_concept_idx:]
         # target_concepts.repeat_interleave(repeats=model.concept_bins[0],dim=-1)   # To supervise the doubled concept predictions
-    target_concepts = target_concepts.float()
-    pred_perm = predicted_concepts.permute(1,3,0,2)
-    tar_perm = target_concepts.permute(1,3,0,2)
+    target_dict['bin'] = target_dict['bin'].float()
+    target_dict['cont'] = target_dict['cont'].float()
+    pred_perm = predicted_concepts['bin'].permute(1,3,0,2)
+    tar_perm = target_dict['bin'].permute(1,3,0,2)
     # loss_bce = torch.nn.BCEWithLogitsLoss(reduction='none')
     # with open("obj_prediction_weights.npy","rb") as of: weights = np.load(of)
     # loss_ce = torch.nn.CrossEntropyLoss(reduction='none')
-    mean_weight = 2*torch.Tensor([0.8673, 0.1327]).to(predicted_concepts.device) # because 2 is the number of classes
+    mean_weight = 2*torch.Tensor([0.8673, 0.1327]).to(predicted_concepts['bin'].device) # because 2 is the number of classes
     loss_ce = torch.nn.CrossEntropyLoss(weight=mean_weight, reduction='none')
-    losses = loss_ce(pred_perm, tar_perm)
-    loss_per_concept = losses.mean(dim=[0,1])
-    concept_loss = loss_per_concept.mean() # sum() ?
+    cont_losses = torch.nn.functional.mse_loss(predicted_concepts['cont'], target_dict['cont'], reduction='none')
+    cont_loss_per_concept = cont_losses.mean(dim=[0,1])
+    bin_losses = loss_ce(pred_perm, tar_perm)
+    bin_loss_per_concept = bin_losses.mean(dim=[0,1])
+    loss_per_concept  = torch.cat((bin_loss_per_concept, cont_loss_per_concept),-1)
+    concept_loss = loss_per_concept.mean()  # sum() ?
     return concept_loss, loss_per_concept
 
 
@@ -149,7 +160,12 @@ def reconstruction_loss(
     else:
         #TODO replace with actual concepts
         # pred_concepts, target_concepts, real_concept_latent, real_non_concept_latent, rand_concept_latent, rand_non_concept_latent = cem_data
-        concept_loss, loss_per_concept = get_concept_loss(world_model.cem, cem_data['concept_logits'], cem_data['target_concepts'])
+        concept_loss, loss_per_concept = get_concept_loss(
+            world_model.cem,
+            cem_data['concept_logits'],
+            cem_data['target_concepts'],
+            cfg.algo.world_model.cbm_model.cont_concept_idx,
+        )
         loss_dict['concept_loss'] = concept_loss  # .mean()
         loss_dict['loss_per_concept'] = loss_per_concept
         orthognality_loss = []

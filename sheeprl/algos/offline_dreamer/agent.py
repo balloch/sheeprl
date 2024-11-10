@@ -978,6 +978,8 @@ class CEM(nn.Module):
         all_pos_concept_latent=None
         concept_probs=None
         all_logits=None
+        expanded_logit_dict = {'bin': None, 'cont': None}
+        concept_probs_dict = {'bin': None, 'cont': None}
         for c in range(self.n_concepts+1):
             ### 1 generate context
             context= self.concept_context_generators[c](h)
@@ -991,14 +993,19 @@ class CEM(nn.Module):
                     prob_gumbel = F.softmax(logits, dim=-1)
 
                 for i in range(self.concept_bins[c]):
-                    temp_concept_latent =  context[:,:, (i*self.emb_size):((i+1)*self.emb_size)].permute(2,0,1) * prob_gumbel[:,:,i] #.unsqueeze(-1)
-                    if i==0:
-                        concept_latent = temp_concept_latent
-                    else:
-                        concept_latent = concept_latent+ temp_concept_latent
-                    if i==1:
-                        pos_concept_latent = temp_concept_latent
-                        pos_concept_latent = pos_concept_latent.permute(1,2,0)
+                    if self.concept_type[c] == 'bin':
+                        temp_concept_latent =  context[:,:, (i*self.emb_size):((i+1)*self.emb_size)].permute(2,0,1) * prob_gumbel[:,:,i] #.unsqueeze(-1)
+                        if i==0:
+                            concept_latent = temp_concept_latent
+                        else:
+                            concept_latent = concept_latent + temp_concept_latent
+                        if i==1:
+                            pos_concept_latent = temp_concept_latent
+                            pos_concept_latent = pos_concept_latent.permute(1,2,0)
+                    elif self.concept_type[c] == 'cont':
+                        concept_latent = context.permute(2,0,1)
+                        pos_concept_latent = context
+
                 concept_latent = concept_latent.permute(1,2,0)
                 if all_concept_latent== None:
                     all_concept_latent=concept_latent
@@ -1013,11 +1020,24 @@ class CEM(nn.Module):
                 if concept_probs == None:
                     concept_probs=prob_gumbel
                     all_logits=logits
-                    expanded_logits = logits.unsqueeze(-2)
                 else:
                     concept_probs=torch.cat((concept_probs,prob_gumbel),-1)  # List of probabilities
                     all_logits=torch.cat((all_logits,logits),-1)
-                    expanded_logits = torch.cat((expanded_logits,logits.unsqueeze(-2)),-2)
+
+                if self.concept_type[c] == 'bin':
+                    if expanded_logit_dict['bin'] == None:
+                        expanded_logit_dict['bin'] = logits.unsqueeze(-2)
+                        concept_probs_dict['bin'] = prob_gumbel[...,0].unsqueeze(-1)
+                    else:
+                        expanded_logit_dict['bin'] = torch.cat((expanded_logit_dict['bin'],logits.unsqueeze(-2)),-2)
+                        concept_probs_dict['bin'] = torch.cat((concept_probs_dict['bin'],prob_gumbel[...,0].unsqueeze(-1)),-1)
+                elif self.concept_type[c] == 'cont':
+                    if expanded_logit_dict['cont'] == None:
+                        expanded_logit_dict['cont'] = logits
+                        concept_probs_dict['cont'] = prob_gumbel[...,0].unsqueeze(-1)
+                    else:
+                        expanded_logit_dict['cont'] = torch.cat((expanded_logit_dict['cont'],logits),-1)
+                        concept_probs_dict['cont'] = torch.cat((concept_probs_dict['cont'],prob_gumbel[...,0].unsqueeze(-1)),-1)
 
             else:  # non-concept latent ==  residual
                 if non_concept_latent== None:
@@ -1026,7 +1046,7 @@ class CEM(nn.Module):
                     non_concept_latent= torch.cat((non_concept_latent,context),-1)
 
         latent = torch.cat((concept_probs,all_concept_latent,non_concept_latent),-1)
-        return latent, expanded_logits, concept_probs[...,::2], all_concept_latent, non_concept_latent, all_pos_concept_latent
+        return latent, expanded_logit_dict, concept_probs_dict, all_concept_latent, non_concept_latent, all_pos_concept_latent
 
     def sample_latent(self, latent_shape) -> torch.Tensor:
         latent = torch.randn(latent_shape)

@@ -773,8 +773,8 @@ def validate_wm(
         observation_error = torch.dist(reconstructed_obs['agentview_rgb'], batch_obs['agentview_rgb'], p=2)
 
         if cfg.algo.world_model.cbm_model.use_cbm:
-            concept_probs = cem_data['concept_probs'] #[...,::2] # only take the positive concept probs
-            target_concepts = cem_data['target_concepts']
+            concept_probs = cem_data['concept_probs']['bin'] # Use only binary concepts in calculation
+            target_concepts = cem_data['target_concepts'][...,:cfg.algo.world_model.cbm_model.cont_concept_idx]
 
             # Binarize predictions (multi-hot)
             predicted = (concept_probs >= 0.5).float()
