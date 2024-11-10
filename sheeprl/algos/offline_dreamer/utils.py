@@ -14,6 +14,7 @@ from torch import Tensor, nn
 from sheeprl.utils.env import make_env
 from sheeprl.utils.imports import _IS_MLFLOW_AVAILABLE
 from sheeprl.utils.utils import unwrap_fabric
+from sheeprl.envs.robosuite import concept_dict
 
 if TYPE_CHECKING:
     from mlflow.models.model import ModelInfo
@@ -21,30 +22,6 @@ if TYPE_CHECKING:
     from sheeprl.algos.offline_dreamer.agent import PlayerODV3
 
 # constants
-CONCEPT_DICT = {
-    0: 'white_yellow_mug',
-    1: 'butter',
-    2: 'wine_bottle',
-    3: 'yellow_book',
-    4: 'ketchup',
-    5: 'tomato_sauce',
-    6: 'orange_juice',
-    7: 'porcelain_mug',
-    8: 'chefmate_8_frypan',
-    9: 'cream_cheese',
-    10: 'plate',
-    11: 'chocolate_pudding',
-    12: 'red_coffee_mug',
-    13: 'moka_pot',
-    14: 'basket',
-    15: 'milk',
-    16: 'white_bowl',
-    17: 'wooden_tray',
-    18: 'akita_black_bowl',
-    19: 'alphabet_soup',
-    20: 'black_book',
-    21: 'new_salad_dressing',
-}
 AGGREGATOR_KEYS = {
     "Rewards/rew_avg",
     "Rewards/ep_rew_max",
@@ -332,7 +309,7 @@ def compare_concepts(embedding_path1, tp_path1, embedding_path2, tp_path2):
         if key in mean_embed_dict2.keys():
             print(mean_embed_dict1[key].shape)
             cos_sim = cosine_similarity(mean_embed_dict1[key], mean_embed_dict2[key])
-            print('concept:', CONCEPT_DICT[key], 'cosine similarity:', cos_sim)
+            print('concept:', concept_dict[key], 'cosine similarity:', cos_sim)
 
             
 def render_vid(
