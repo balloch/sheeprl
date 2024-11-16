@@ -606,7 +606,7 @@ class RobosuiteWrapper(gym.Wrapper):
 
         return r_reach, r_grasp, r_lift, r_hover
 
-    def nvidia_staged_rewards(self):
+    def maniskill_staged_rewards(self):
         """
         Computes isaac-style dense rewards
         Uses robosuite functions to calculate distance
@@ -624,7 +624,7 @@ class RobosuiteWrapper(gym.Wrapper):
         ) / self._initial_distances['target_to_eef']
 
         # [0, 2]
-        reward = reach_reward = 2 * (1 - np.tanh(5 * eef_to_target_dist))
+        reward = reach_reward = 2 * (1 - np.tanh(1.6 * eef_to_target_dist))
 
         # Grasp and place reward
         goal_xy = self.env.sim.data.body_xpos[self._goal_location['body_geom_id']][:2]
@@ -682,7 +682,7 @@ class RobosuiteWrapper(gym.Wrapper):
         reward = self.env.reward()
 
         if not self.reward_shaping.disable and self.bddl_file:
-            if self.reward_shaping.mode == 'summed': # TODO: Change this name (mode : str = 'summed' | 'stepped' | 'nvidia')
+            if self.reward_shaping.mode == 'summed': # TODO: Change this name (mode : str = 'summed' | 'stepped' | 'maniskill')
                 r_reach, r_grasp, r_lift, r_hover = self.staged_rewards()
                 reward += sum([r_reach, r_grasp, r_lift, r_hover])
             elif self.reward_shaping.mode == 'stepped':

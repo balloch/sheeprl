@@ -55,8 +55,9 @@ wrapper:
   reward_scale: 1.0
   reward_shaping:
     disable: False
-    mode: nvidia # summed | stepped | nvidia
-    terminal_multiplier: 10
+    mode: maniskill # summed | stepped | maniskill
+
+    terminal_multiplier: 32
     stages:
       reach:
         mult: 0.25
