@@ -9,15 +9,14 @@ show_help() {
     echo    "## Usage: $0 [options]"
     echo -e "          $0 <exp_output_dir> <parent_configs> \n"
     echo
+    echo "Uses all configs in the specified directory by default"
     echo "Options:"
     echo "  --help          Show this help message and exit"
     echo "  --hard_configs  Use the configs hardcoded in this file"
     echo "  --configs       Use a list of configs after this flag"
-    echo "  --config_dir    Use all configs in the specified directory"
 }
 
 # Check for the --help flag
-#if [[ -z "$1" || "$1" == "-h" || "$1" == "--help" || "$1" == "--helper" ]]; then
 if [[ "$1" == "-h" || "$1" == "--help" || "$1" == "--helper" ]]; then
     show_help
     exit 0
@@ -38,7 +37,7 @@ ENV="robosuite"
 
 SCRIPT_DIR="$ROOT/code/${PROJECT}/slurm"
 
-CONFIG_DIR="$ROOT/code/${PROJECT}/slurm/slurm_configs/${ENV}"
+CONFIG_DIR="$ROOT/code/${PROJECT}/slurm/slurm_configs/${ENV}_scratch"
 
 RUNNER_WRAPPER_SCRIPT="${SCRIPT_DIR}/template_wrapper_${PROJECT}_${ENV}.sh"
 
@@ -46,10 +45,9 @@ if [ $# -eq 2 ] && [ "$1" = "--hard_configs" ]; then
     # Use configs hardcoded in this file
     echo "Using hardcoded configs"
     CONFIGS=("train_bwm.txt" "train_cbwm.txt")
-    #CONFIGS=("walker_175_dreamer.yml" "walker_175_cr.yml" "walker_175_does.yml" "walker_300_dreamer.yml" "walker_300_cr.yml" "walker_300_does.yml")
     #CONFIGS=("${hardcoded_files[@]/#/$directory/}")
 # Check if specific files are provided as arguments
-elif [ $# -gt 2 ] && [ "$1" = "--configs" ]; then
+elif [ $# -gt 2 ] && [ "$1" = "--configs" ]; then # TODO this mode isn't working
     # Shift to remove the directory argument
     echo "specified configs:"
     shift
@@ -61,9 +59,9 @@ else
     # Loop through each file to filter out
     CONFIGS=()
     for file in "${CONFIG_DIR}"/*; do
-        # Check if it is a file and does not end in ".args"
+        # Check if it is a file and does not end in ".args or .combos"
         echo "checking file ${file}?"
-        if [ -f "$file" ] && [[ ! "$file" =~ \.args$ ]]; then
+        if [ -f "$file" ] && [[ ! "$file" =~ \.(args|combos)$ ]]; then
             bn=$(basename "$file")
             echo "basename: $bn"
             CONFIGS+=($(basename "$file"))
@@ -86,7 +84,7 @@ CPT=0
 
 
 # -- grab un-usable nodes
-mapfile -t all_nodes < <( squeue -u abeedu3 -o "%N" )
+mapfile -t all_nodes < <( squeue -u jballoch6 -o "%N" )
 
 all_nodes=("${all_nodes[@]:1}")
 
@@ -100,6 +98,17 @@ done
 exclude_nodes="${exclude_nodes:0:-1}"
 echo -e "## excluding these nodes: $exclude_nodes \n"
 
+
+
+# Read permutations.combos and generate argument combinations
+# Source the generate_arg_combos function
+source ${SCRIPT_DIR}/generate_arg_combos.sh
+
+PERMUTATIONS_FILE="$CONFIG_DIR/permutations.combos"
+EXTRA_COMBINATIONS=()
+if [ -f "$PERMUTATIONS_FILE" ]; then
+    EXTRA_COMBINATIONS=($(generate_arg_combinations "$PERMUTATIONS_FILE"))
+fi
 
 
 
@@ -130,6 +139,7 @@ for cfg in "${CONFIGS[@]}"; do
         done < "$args_file"
     fi
 
+
     # create copy of runner_wrapper.sh template
     tmp_wrapper_name="wrapper_${PROJECT}_${basename}_${UNIQUE_ID}_${CPT}.sh"
     dst_wrapper="$SCRIPT_DIR/tmp/$tmp_wrapper_name"
@@ -142,8 +152,27 @@ for cfg in "${CONFIGS[@]}"; do
     #if [ -n "$PRETRAINED_MODEL" ]; then
     #    sbatch autoslurm_script.sh "$dst_wrapper"     "${EXPERIMENT_OUTPUT_DIR}/${cfg%.*}" "$config_file" "$PRETRAINED_MODEL"
     #else
-    sbatch autoslurm_script.sh --job-name="${PROJECT}_${basename}_${UNIQUE_ID}_${CPT}" "JOB" "$dst_wrapper"  "${EXPERIMENT_OUTPUT_DIR}/${basename}_${UNIQUE_ID}_${CPT}" "${config_file}" "${EXTRA_ARGS[@]}"
-    #fi
-    ((CPT++))
+    # Loop over combinations of extra args
+    for extra_arg in "${EXTRA_COMBINATIONS[@]}"; do
+        # Add the extra argument to the EXTRA_ARGS array
+        if [ -n "$extra_arg" ]; then
+            EXTRA_ARGS+=("$extra_arg")
+        fi
 
+        for SEED in $(seq 0 2); do
+            echo "      ---- RUN SEED $SEED"
+            arr_str="${myArray[*]}"
+            arr_str="${arr_str//[^[:alnum:]]/-}"
+            OUTPUT_DIR="${EXPERIMENT_OUTPUT_DIR}/${basename}_${arr_str}_${UNIQUE_ID}_${CPT}_${SEED}"
+
+
+            # echo -e "$dst_wrapper ${OUTPUT_DIR} ${config_file} ${SEED} ${EXTRA_ARGS[@]}"
+            sbatch autoslurm_script.sh --job-name="${PROJECT}_${basename}_${UNIQUE_ID}_${CPT}_${SEED}" "JOB" "$dst_wrapper"  "${OUTPUT_DIR}" "${config_file}" "${SEED}" "${EXTRA_ARGS[@]}"
+            #fi
+        done
+        # Clear EXTRA_ARGS after sbatch call
+        EXTRA_ARGS=()  # TOD Hack. Reset the array to empty. doesn't work with .arg files
+
+        ((CPT++))
+    done
 done

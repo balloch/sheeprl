@@ -1,0 +1,9 @@
+offline_dataset:
+  options: rand_libero_90, libero_90
+  combo: all
+train_transforms.Pad.padding:
+  options: 2, 4
+  combo: alone
+train_transforms:
+  options: null
+  combo: alone

@@ -88,11 +88,11 @@ algo:
   replay_ratio: 0.5
   # World model optimizer
   world_model:
-    opt_warmup:
-      type: linear
-      ratio: 0.01
+    opt_warmup: null
+      # type: linear
+      # ratio: 0.01
     optimizer:
-      lr: 1e-7
+      lr: 1e-5
       eps: 1e-9
 
 # Metric

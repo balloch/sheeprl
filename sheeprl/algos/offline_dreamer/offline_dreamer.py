@@ -576,12 +576,56 @@ class CombinedDictDataset(Dataset):
 
 
 class TransformedDictDataset(Dataset):
-    def __init__(self, dataset, transform_dict=None, ratio=1):
+    def __init__(self, dataset, transform_dict=None): #, preprocess_tranform_dict=None, batch_size=None):
         super().__init__()
         self.dataset = dataset
         self.transform_dict = transform_dict
-        self.ratio = ratio
+        # self.ratio = ratio
 
+        # self.batch_size = batch_size
+        # if preprocess_tranform_dict is not None:
+        #     if self.batch_size is None:
+        #         self._autoset_batch_size()
+        #     self.preprocess_transform_dict = preprocess_tranform_dict
+        #     self.dataset = self._preprocess_data()
+
+    # def _autoset_batch_size(self):
+    #     self.batch_size = 32
+
+    # def _preprocess_data(self):
+    #     # DEPRACATED! cannot overwrite dataset data
+    #     # preprocessed_data = deepcopy(self.orig_dataset)
+    #     for i in range(0, len(self.dataset), self.batch_size):
+    #         sample_range = range(i,i + self.batch_size)
+    #         batch_samples = self.dataset.__getitems__([*sample_range])
+
+    #         for type_key, value in self.preprocess_transform_dict.items():
+    #             # Check if value is a Tensor or numpy array
+    #             if isinstance(value, dict):
+    #                 for obs_key, composed_transform in value.items():
+    #                     batch_tensor = self._process_tensor(
+    #                         batch_tensor = torch.from_numpy(np.stack([sample[type_key][obs_key] for sample in batch_samples])),
+    #                         transform = composed_transform)
+    #                     for batch_idx, dataset_idx in enumerate(sample_range): #size(0)): # torch.unbind
+    #                         import pdb; pdb.set_trace()
+    #                         self.dataset[dataset_idx][type_key][obs_key] = batch_tensor[batch_idx].numpy()
+
+    #             elif callable(value):
+    #                 composed_transform = value
+    #                 batch_tensor = self._process_tensor(
+    #                     batch_tensor = torch.from_numpy(np.stack([sample[type_key] for sample in batch_samples])),
+    #                     transform = composed_transform)
+    #                 for batch_idx, dataset_idx in enumerate(sample_range): #size(0)): # torch.unbind
+    #                     self.dataset[dataset_idx][type_key] = batch_tensor[batch_idx].numpy()
+
+    #             else:
+    #                 print(f"Invalid type for preprocessing: {value} of type {type(value)}")
+
+
+    # def _process_tensor(self, batch_tensor, transform):
+    #     batch_tensor = batch_tensor.to('cuda')
+    #     batch_tensor = transform(batch_tensor) # tv_tensors.Video(
+    #     return batch_tensor.cpu()
 
     def __len__(self):
         return len(self.dataset)
@@ -589,12 +633,15 @@ class TransformedDictDataset(Dataset):
     def __getitem__(self, idx):
         data_item = self.dataset[idx]
         if self.transform_dict is not None:
-            for key, transform in self.transform_dict.items():
-                # Assuming the key is a subkey of the 'obs' dictionary
-                tv_video = tv_tensors.Video(data_item['obs'][key]) #T,C,H,W
-                data_item['obs'][key] = transform(tv_video)
-                del tv_video
+            for type_key, value in self.transform_dict.items():
+                if isinstance(value, dict):
+                    for key, transform in value.items():
+                        # Assuming the key is a subkey of the 'obs' dictionary
+                        tv_video = tv_tensors.Video(data_item[type_key][key]) #T,C,H,W
+                        data_item[type_key][key] = transform(tv_video)
+                        # del tv_video
         # SheepRL/gymnasium specific
+
         data_item['truncated'] = data_item['dones']
         data_item['terminated'] = data_item['dones']
         for obskey, obs_tmp in data_item['obs'].items():
@@ -1708,28 +1755,38 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
                         dtype=v.dtype
                     )
             observation_space = gym.spaces.Dict(obs_space_dict)
-        ## NOTE: all Libero90 datapoints are concatonated sequences of 64 frames.
+        ## NOTE: all Libero90 dataset points are concatonated sequences of 64 frames.
 
-        # Split into train and validation
+        ## Split into train and validation
+
+
         generator1 = torch.Generator().manual_seed(cfg.seed)
         train_split, val_split = torch.utils.data.random_split(
             dataset=concat_dataset,
             lengths=[cfg.algo.offline_train_split, 1-cfg.algo.offline_train_split],
             generator=generator1
             )
-        train_transforms_dict = {
-            'agentview_rgb': v2.Compose([
-                v2.Resize((cfg.env.screen_size, cfg.env.screen_size)),
-                # v2.Pad(4,padding_mode=cfg.train_transforms.Pad.pad_type),
-                # v2.RandomCrop(cfg.env.screen_size),
-                # v2.ToTensor(),
-            ]) }
+
+        ## Data transforms and dataloaders
+        img_transform_list = [v2.Resize((cfg.env.screen_size, cfg.env.screen_size))]
+        # img_sample_transform_list = []
+        if 'train_transforms' in cfg:
+            if 'Pad' in cfg.train_transforms:
+                img_transform_list.append(v2.Pad(
+                    padding=cfg.train_transforms.Pad.padding,
+                    padding_mode=cfg.train_transforms.Pad.pad_type))
+            if 'RandomCrop' in cfg.train_transforms:
+                img_transform_list.append(v2.RandomCrop(
+                    size=cfg.train_transforms.RandomCrop.size,))
+        train_transform_dict={'obs':{'agentview_rgb': v2.Compose(img_transform_list), },}
+
         train_dataset = TransformedDictDataset(
             dataset=train_split,
-            transform_dict=train_transforms_dict,
-            ratio=int(1.0/cfg.algo.replay_ratio)
+            # transform_dict=train_transform_dict,
+            # ratio=int(1.0/cfg.algo.replay_ratio),
+            # preprocess_tranform_dict={'obs':{'agentview_rgb': v2.Compose(img_pre_transform_list),},},
             )
-        # torch.multiprocessing.set_sharing_strategy('file_system')  # Helped but only sligtly
+
         train_dataloader = DataLoader(
             train_dataset,
             batch_size=cfg.algo.per_rank_batch_size * 2, # replay_ratio=0.5 This is hacky, but Ratio is confusing
@@ -1979,6 +2036,15 @@ def main(fabric: Fabric, cfg: Dict[str, Any], pretrain_cfg: Dict[str, Any] = Non
 
                             # shaped_local_data = {k: v[i].float() for k, v in local_data.items()}
                             shaped_batch = {k: v[i].float() for k, v in batch.items()}
+                            ## faster batch-wise transforms
+                            for type_key, value in train_transform_dict.items():
+                                if isinstance(value, dict):
+                                    for obs_key, composed_transform in value.items():
+                                        if type_key in shaped_batch and obs_key in shaped_batch[type_key]:
+                                            shaped_batch[type_key][obs_key] = composed_transform(shaped_batch[type_key][obs_key])
+                                        elif obs_key in shaped_batch:
+                                            shaped_batch[obs_key] = composed_transform(shaped_batch[obs_key])
+
                             optional_reconstruction = train(
                                 fabric=fabric,
                                 world_model=world_model,

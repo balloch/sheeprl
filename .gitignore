@@ -5,6 +5,7 @@ demonstration_data*
 # Slurm output files
 *.out
 *.err
+slurm/tmp/
 
 # Outputs
 *.png
