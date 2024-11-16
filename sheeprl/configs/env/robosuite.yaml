@@ -55,8 +55,9 @@ wrapper:
   reward_scale: 1.0
   reward_shaping:
     disable: False
-    mode: nvidia # summer | stepped | nvidia
-    terminal_multiplier: 16
+    mode: maniskill # summer | stepped | maniskill
+
+    terminal_multiplier: 32
     stages:
       reach:
         mult: 0.25
