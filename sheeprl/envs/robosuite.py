@@ -1,7 +1,6 @@
 from typing import Any, Dict, Optional, SupportsFloat, Tuple, Union
 from sheeprl.utils.utils import dotdict
 import os
-import warnings
 
 import gymnasium as gym
 import numpy as np
@@ -13,9 +12,6 @@ from libero.libero.envs import TASK_MAPPING  #*
 import time
 from functools import reduce
 import operator
-from pyinstrument import Profiler
-import pyinstrument
-from pyinstrument.renderers import ConsoleRenderer
 
 
 
@@ -35,14 +31,13 @@ class RobosuiteWrapper(gym.Wrapper):
         reward_shaping: dotdict = None,
         ignore_done: bool = True,
         has_renderer: bool = False,
-        has_offscreen_renderer: bool = True,
+        has_offscreen_renderer: bool = False,
         use_camera_obs: bool = True,
         use_vector_obs: bool = False,
         control_freq: int = 20,
         keys: None = None,
         channels_first: bool = True,
-        action_repeat: int = 1,
-        supervised_concepts: Union[list,None] = None
+        action_repeat: int = 1
         ):
         """Robosuite wrapper
         Args:
@@ -60,6 +55,7 @@ class RobosuiteWrapper(gym.Wrapper):
             use_camera_obs: (bool) = False,
             control_freq: (int) = 20,
         """
+
         self.env_name = env_name
         self.env_config = env_config
         self.robot = robot
@@ -77,7 +73,6 @@ class RobosuiteWrapper(gym.Wrapper):
         self.use_vector_obs = use_vector_obs
         self.control_freq = control_freq
         self.action_repeat = action_repeat
-        self.supervised_concepts = supervised_concepts
 
         libero_args=dict(
             env_configuration=self.env_config,
@@ -92,7 +87,6 @@ class RobosuiteWrapper(gym.Wrapper):
             has_offscreen_renderer=self.has_offscreen_renderer,
             use_camera_obs=self.use_camera_obs,
             control_freq=self.control_freq,
-            render_gpu_device_id=0,
         )
         extra_robosuite_make_args=dict(
             env_name=self.env_name,
@@ -106,6 +100,7 @@ class RobosuiteWrapper(gym.Wrapper):
                 bddl_file_name=bddl_file,
                 **libero_args,
             )
+            self.concepts = np.array(get_bddl_concepts(self.bddl_file))
         else:
             env = suite.make(**libero_args,
                              **extra_robosuite_make_args)
@@ -113,11 +108,6 @@ class RobosuiteWrapper(gym.Wrapper):
         super().__init__(env)
 
         obs = self.env.reset()
-
-        # initialize self._last_concepts
-        self._last_concepts = None
-        if self.supervised_concepts:
-            self.update_concepts(obs)
 
         # We need this to be here because we want the environment to exist at this point
         if not self.reward_shaping.disable and self.bddl_file:
@@ -188,7 +178,7 @@ class RobosuiteWrapper(gym.Wrapper):
 
         # set the reward range
         self._reward_range = (0, self.env.reward_scale)  # self.reward_range
-
+        
 
         # create observation space
         self._observation_space = spaces.Dict(obs_space)
@@ -206,12 +196,12 @@ class RobosuiteWrapper(gym.Wrapper):
         self.seed = 10  #TODO this should come from the config
 
         self.step_returns = {
-            'extrinsic': -1*np.ones(self.horizon), #*20
+            'extrinsic': -1*np.ones(self.horizon*20),
             'intrinsic': {
-                'reach': -1*np.ones(self.horizon),
-                'grasp': -1*np.ones(self.horizon),
-                'lift': -1*np.ones(self.horizon),
-                'hover': -1*np.ones(self.horizon)
+                'reach': -1*np.ones(self.horizon*20),
+                'grasp': -1*np.ones(self.horizon*20),
+                'lift': -1*np.ones(self.horizon*20),
+                'hover': -1*np.ones(self.horizon*20)
             }
         }
         self.ep_stats = {
@@ -303,6 +293,11 @@ class RobosuiteWrapper(gym.Wrapper):
     def render_mode(self) -> str:
         return self._render_mode
 
+    # def seed(self, seed: Optional[int] = None):
+    #     self._true_action_space.seed(seed)
+    #     self._norm_action_space.seed(seed)
+    #     self._observation_space.seed(seed)
+
     def step(
         self, action: Any
     ) -> Tuple[Union[Dict[str, np.ndarray], np.ndarray], SupportsFloat, bool, bool, Dict[str, Any]]:
@@ -317,26 +312,25 @@ class RobosuiteWrapper(gym.Wrapper):
             reward = reward * (8 * self.reward_shaping.terminal_multiplier)
         # try:
         self.step_returns['extrinsic'][self.ep_length] = reward
-
+        
         reward += self.compute_reward()
-
+        
         # except Exception as e:
         #     import pdb; pdb.set_trace()
         # if self.reward_shaping and self.bddl_file:
         #     reward += self.staged_rewards()
         terminated = time_step[2] and reward > 0
         truncated = not terminated and time_step[2] and self.ep_length == self.horizon - 2 and reward == 0 # ep_length 998 means we have completed |[0, 999]| = 1000 steps
-
+        
         # (done and (terminated or truncated)) or (not done)
         assert (time_step[2] and (terminated or truncated)) or (not time_step[2])
-
+                
         infos = time_step[3]
         infos["discount"] = .997  # TODO: I don't know if thats correct
         infos["internal_state"] = time_step[0]
-
-        if self.supervised_concepts:
-            self.update_concepts(obs)
-            infos["concepts"] = self.get_concepts()
+        
+        
+        infos["concepts"] = self.concepts
 
         self.ep_length += 1
 
@@ -356,11 +350,10 @@ class RobosuiteWrapper(gym.Wrapper):
             self.ep_stats['extrinsic'].append(
                 self.step_returns['extrinsic'][self.step_returns['extrinsic'] > -1].mean())
             for key in self.ep_stats['intrinsic'].keys():
-                if (self.step_returns['intrinsic'][key] > -1).any():
-                    self.ep_stats['intrinsic'][key]['mean'].append(
-                        self.step_returns['intrinsic'][key][self.step_returns['intrinsic'][key] > -1].mean())
-                    self.ep_stats['intrinsic'][key]['max'].append(
-                        self.step_returns['intrinsic'][key][self.step_returns['intrinsic'][key] > -1].max())
+                self.ep_stats['intrinsic'][key]['mean'].append(
+                    self.step_returns['intrinsic'][key][self.step_returns['intrinsic'][key] > -1].mean())
+                self.ep_stats['intrinsic'][key]['max'].append(
+                    self.step_returns['intrinsic'][key][self.step_returns['intrinsic'][key] > -1].max())
 
             self.ep_stats['length'].append(self.ep_length)
 
@@ -377,7 +370,6 @@ class RobosuiteWrapper(gym.Wrapper):
             self.ep_length = 0
 
         orig_obs = self.env.reset()
-        infos = {}
         if self.initial_joint_positions:
             self.env.robots[0].set_robot_joint_positions(self.initial_joint_positions)
             # Resample without stepping
@@ -393,11 +385,7 @@ class RobosuiteWrapper(gym.Wrapper):
         self.current_state = orig_obs
         # self.current_state = _flatten_obs(time_step.observation)
         obs = self._get_obs(orig_obs)
-        if self.supervised_concepts:
-            self.update_concepts(obs)
-            infos["concepts"] = self.get_concepts()
-
-        return obs, infos
+        return obs, {}
         # return obs, (), False, False, {}
 
     def get_env_stats(self, stats_dict = None, reset: bool = False) -> Dict[str, Any]:
@@ -439,34 +427,6 @@ class RobosuiteWrapper(gym.Wrapper):
             }
         return tracked_stats
 
-    def update_concepts(self, obs=None):
-        if self._last_concepts is None:
-            self._last_concepts = []
-            if 'bddl_objects' in self.supervised_concepts:
-                if not self.bddl_file:
-                    raise ValueError("bddl_objects requested but no bddl_file provided")
-                self._last_concepts.extend(get_bddl_concepts(self.bddl_file))
-            if 'joint_positions' in self.supervised_concepts:
-                if obs is None or 'state' not in obs:
-                    raise ValueError("obs with 'state' required for joint concepts")
-                else:
-                    self._last_concepts.extend(obs['state'])
-                    warnings.warn("joint_positions not tested")
-            self._last_concepts = np.array(self._last_concepts)
-        else:
-            if 'joint_positions' in self.supervised_concepts:
-                if obs is None or 'state' not in obs:
-                    raise ValueError("obs with 'state' required for joint concepts")
-                else:
-                    joint_start = len(self._last_concepts)-len(obs['state'])
-                    self._last_concepts[joint_start:]=obs['state']
-                    warnings.warn("joint_positions not tested")
-
-    def get_concepts(self,obs=None):
-        if self._last_concepts is None:
-            self.update_concepts(obs)
-        return self._last_concepts
-
     def _update_initial_distances(self):
         env : gym.Env = self.env
         # Calculate starting distances to normalize
@@ -487,7 +447,7 @@ class RobosuiteWrapper(gym.Wrapper):
         self._initial_distances = {
             'target_to_eef': target_to_eef,
             'target_to_goal_xy': target_to_goal_xy,
-            'target_to_goal_xyz': target_to_goal_xyz,
+            'target_to_goal_xyz': target_to_goal_xyz,   
             'object_z': object_z
         }
 
@@ -544,16 +504,14 @@ class RobosuiteWrapper(gym.Wrapper):
         # If statement to prevent reward from increasing if dist > 1
         r_reach = max(0, min(r_reach, reach_mult)) if eef_to_target_dist <= 1 else 0
 
-        names = ['gripper0_finger1_pad_collision', 'gripper0_finger2_pad_collision']
-
         is_left_contact = check_contact(self.env.sim, names[0], self._target_object['object'])
         is_right_contact = check_contact(self.env.sim, names[1], self._target_object['object'])
         is_touching = is_left_contact and is_right_contact
-
+        
         finger1_col = self.env.sim.data.geom_xpos[self.env.sim.model.geom_name2id("gripper0_finger1_collision")]
         finger2_col = self.env.sim.data.geom_xpos[self.env.sim.model.geom_name2id("gripper0_finger2_collision")]
-        is_open = np.linalg.norm(finger1_col - finger2_col) > 0.02 # Magic number, model starts at 0.06419 (significantly open)
-
+        is_open = np.linalg.norm(finger1_col - finger2_col) > 0.02 # Magic number, model starts at 0.06419 (significantly open)    
+        
         # As per the isaac cube stack definition
         is_grasping = is_open and is_touching
 
@@ -592,7 +550,7 @@ class RobosuiteWrapper(gym.Wrapper):
         self.max_lift_ep = max(self.max_lift_ep, r_lift)
 
         r_hover = 0.0
-        if self.max_lift_ep > 0.02:
+        if self.max_lift_ep > 0.03:
             # Hover reward
             r_hover = ((1.75 - 1.75  * target_to_goal_dist)**2) * hover_mult
 
@@ -611,9 +569,9 @@ class RobosuiteWrapper(gym.Wrapper):
         Computes isaac-style dense rewards
         Uses robosuite functions to calculate distance
         """
-
+        
         reward = 0.0
-
+    
         # Reaching reward
         # Normalized, > 1 if farther than initial position, [0, 1] if closer
         eef_to_target_dist = self.env._gripper_to_target(
@@ -622,48 +580,48 @@ class RobosuiteWrapper(gym.Wrapper):
             target_type="body",
             return_distance=True
         ) / self._initial_distances['target_to_eef']
-
+        
         # [0, 2]
         reward = reach_reward = 2 * (1 - np.tanh(1.6 * eef_to_target_dist))
-
+        
         # Grasp and place reward
         goal_xy = self.env.sim.data.body_xpos[self._goal_location['body_geom_id']][:2]
         object_xy = self.env.sim.data.body_xpos[self._target_object['body_geom_id']][:2]
         target_to_goal_dist = np.linalg.norm(goal_xy - object_xy) / self._initial_distances['target_to_goal_xy']
-
+        
         # [0, 1]
         place_reward = 1 - np.tanh(5.0 * target_to_goal_dist)
-
+        
         names = ['gripper0_finger1_pad_collision', 'gripper0_finger2_pad_collision']
-
+        
         # Grasp
         # Requires contact with BOTH pads and hand at least a bit open
         is_left_contact = check_contact(self.env.sim, names[0], self._target_object['object'])
         is_right_contact = check_contact(self.env.sim, names[1], self._target_object['object'])
         is_touching = is_left_contact and is_right_contact
-
+        
         finger1_col = self.env.sim.data.geom_xpos[self.env.sim.model.geom_name2id("gripper0_finger1_collision")]
         finger2_col = self.env.sim.data.geom_xpos[self.env.sim.model.geom_name2id("gripper0_finger2_collision")]
-        is_open = np.linalg.norm(finger1_col - finger2_col) > self._open_threshold # Magic number, model starts at 0.06419 (significantly open)
-
+        is_open = np.linalg.norm(finger1_col - finger2_col) > self._open_threshold # Magic number, model starts at 0.06419 (significantly open)    
+        
         # Lift reward
         distance_lifted = self.env.sim.data.body_xpos[self._target_object['body_geom_id']][2] - self._initial_distances['object_z']
         distance_lifted = max(distance_lifted, 0) # Safeguard for dropping the object below initial position
         # z : distance lifted
         is_lifted = distance_lifted > self._lift_threshold
         r_lift = 0.5 * np.tanh(10 * distance_lifted - 1.1) + 0.5
-
+        
         # print(target_to_goal_dist)
         # As per the isaac cube stack definition
         if (is_touching and is_open) or target_to_goal_dist < 0.02:
             reward = 4
             if is_lifted:
                 reward += r_lift + place_reward
-
+            
         # Max reward is 8
         # reward /= 8
-
-        return reward, reach_reward, 4 if is_touching and is_open else 0, r_lift, place_reward
+            
+        return reward, reach_reward, 4 if is_touching and is_open else 0, r_lift, place_reward 
 
     # kwargs here to keep compatibility with gym inteface
     def compute_reward(self, achieved_goal = None, desired_goal = None, info = None):
@@ -678,9 +636,9 @@ class RobosuiteWrapper(gym.Wrapper):
         Returns:
             float: environment reward
         """
-
+        
         reward = self.env.reward()
-
+        
         if not self.reward_shaping.disable and self.bddl_file:
             if self.reward_shaping.mode == 'summed': # TODO: Change this name (mode : str = 'summed' | 'stepped' | 'maniskill')
                 r_reach, r_grasp, r_lift, r_hover = self.staged_rewards()
@@ -710,10 +668,11 @@ class RobosuiteWrapper(gym.Wrapper):
                     # print("grasp")
                 else:
                     reward += r_reach
-                    # print("reach")
-            elif self.reward_shaping.mode == 'nvidia':
-                dense_reward, r_reach, r_grasp, r_lift, r_hover = self.nvidia_staged_rewards()
+                    # print("reach")   
+            elif self.reward_shaping.mode == 'maniskill':
+                dense_reward, r_reach, r_grasp, r_lift, r_hover = self.maniskill_staged_rewards()
                 reward += dense_reward
+                
             staged_rewards = {
                 'reach': r_reach,
                 'grasp': r_grasp,
