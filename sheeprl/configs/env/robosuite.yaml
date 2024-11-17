@@ -56,7 +56,6 @@ wrapper:
   reward_shaping:
     disable: False
     mode: maniskill # summed | stepped | maniskill
-
     terminal_multiplier: 32
     stages:
       reach:
