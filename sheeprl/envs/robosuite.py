@@ -760,7 +760,7 @@ concept_dict = {
     'alphabet_soup': 19,
     'black_book': 20,
     'new_salad_dressing': 21,
-    'bbq_sauce': 22,  #Not in libero90
+    # 'bbq_sauce': 22,  #Not in libero90
     # 'cookies': 23,  #Not in libero90
     # 'glazed_rim_porcelain_ramekin': 24,  # Not in libero90
 }

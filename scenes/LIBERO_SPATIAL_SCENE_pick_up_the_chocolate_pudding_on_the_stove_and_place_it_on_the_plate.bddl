@@ -109,7 +109,7 @@
   (:objects
     akita_black_bowl_1 - akita_black_bowl
     chocolate_pudding_1 - chocolate_pudding
-    glazed_rim_porcelain_ramekin_1 - glazed_rim_porcelain_ramekin
+    red_coffee_mug_1 - red_coffee_mug
     plate_1 - plate
   )
 
@@ -122,7 +122,7 @@
     (On chocolate_pudding_1 flat_stove_1_cook_region)
     (On plate_1 main_table_plate_region)
     (On akita_black_bowl_1 main_table_box_region)
-    (On glazed_rim_porcelain_ramekin_1 main_table_ramekin_region)
+    (On red_coffee_mug_1 main_table_ramekin_region)
     (On wooden_cabinet_1 main_table_cabinet_region)
     (On flat_stove_1 main_table_stove_region)
   )
