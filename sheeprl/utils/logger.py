@@ -56,7 +56,7 @@ def get_logger(fabric: Fabric, cfg: Dict[str, Any]) -> Optional[Logger]:
             # cfg.metric.logger.save_dir = root_dir
             cfg.metric.logger.name = cfg.run_name
         # import pdb; pdb.set_trace()
-        if not os.path.exists(cfg.metric.logger.save_dir):
+        if cfg.metric.logger.save_dir and not os.path.exists(cfg.metric.logger.save_dir):
             os.makedirs(cfg.metric.logger.save_dir)
         logger = hydra.utils.instantiate(cfg.metric.logger, _convert_="all")
     return logger
